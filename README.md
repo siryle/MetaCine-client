@@ -55,7 +55,9 @@ git push origin v1.0.0
 
 Gitea 镜像将版本标签同步至 GitHub 后触发发布。只有模拟器测试和真机构建都成功才会发布。主版本号使用三个数字段（如 `1.0.0`）；`v1.1.0-beta.1` 形式的标签会产生 iOS 版本号 `1.1.0` 和 GitHub 预发布版本。构建号使用 GitHub Actions 的运行编号。
 
-每次分支 push 成功构建后都会生成 `v<版本>-build.<运行编号>` 预发布 Release，附带本次 IPA 和 SHA-256，不需要再推送版本标签或手动点击发布。连续 push 不会自动取消之前的构建，各次成功构建分别保留对应的 Release。PR 不发布 Release，测试或构建失败也不发布。
+每次分支 push 成功构建后都会生成 `v<版本>-build.<运行编号>` 预发布 Release，附带本次 IPA 和 SHA-256，不需要再推送版本标签或手动点击发布。连续 push 不会自动取消之前的构建。PR 不发布 Release，测试或构建失败也不发布。
+
+`.github/workflows/cleanup.yml` 在 iOS 工作流结束后自动清理历史：按运行编号保留最近 3 次已完成的 iOS 构建（含失败记录），删除更早记录及其 artifacts / 日志；正在运行或排队的构建会继续执行。Releases 按发布时间保留最近 3 个包含 IPA 的已发布版本，正式版和预发布版共同计数，删除更早的 Release 及全部附件。草稿和不含 IPA 的 Release 不参与清理。清理工作流独立运行，避免并行构建完成顺序影响保留数量，也可手动执行。
 
 测试通过后还会实际安装并启动模拟器 App，上传 `iPhone-launch-preview` 截图 artifact，供检查首次启动界面。
 
@@ -68,7 +70,7 @@ MetaCine-1.0.0-unsigned.ipa
 MetaCine-1.0.0-unsigned.ipa.sha256
 ```
 
-Release 上传由工作流的 `GITHUB_TOKEN` 完成，仅发布任务授予 `contents: write`，无需额外配置 Personal Access Token。构建流程不使用 p12、mobileprovision、Apple ID 或签名 secrets。
+Release 上传和历史清理由工作流的 `GITHUB_TOKEN` 完成。发布任务授予 `contents: write`，清理任务授予 `contents: write` 和 `actions: write`，无需额外配置 Personal Access Token。清理脚本只从默认分支检出和执行。构建流程不使用 p12、mobileprovision、Apple ID 或签名 secrets。
 
 **未签名 IPA 无法直接点击安装到普通 iPhone。** 下载后需要使用自己的 Apple 签名或兼容的侧载工具重新签名。GitHub Actions 构建未签名安装包不等于 App Store / TestFlight 发布。
 

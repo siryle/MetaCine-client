@@ -33,6 +33,7 @@ jobs:
       - name: Validate project and repository
         run: |
           node scripts/generate-project.mjs
+          node --test scripts/prune-github-history.test.mjs
           python3 scripts/validate-project.py
           git diff --exit-code -- MetaCine.xcodeproj
       - name: Run unit and API contract tests
