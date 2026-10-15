@@ -2,7 +2,7 @@ name: iOS Build and Release
 
 on:
   push:
-    branches: [main]
+    branches: ["**"]
     tags: ["v*"]
   pull_request:
     branches: [main]
@@ -20,10 +20,6 @@ on:
 
 permissions:
   contents: read
-
-concurrency:
-  group: ios-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: ${{ github.ref_type != 'tag' }}
 
 jobs:
   test:
@@ -104,7 +100,7 @@ jobs:
   release:
     name: Publish GitHub Release
     needs: build
-    if: github.event_name != 'pull_request' && (github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish_release))
+    if: github.event_name == 'push' || (github.event_name == 'workflow_dispatch' && inputs.publish_release)
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -144,9 +140,13 @@ jobs:
 
           Download the `.sha256` file to verify the IPA checksum.
           NOTES
-          if ! gh release view "$tag" > /dev/null 2>&1; then
+          printf '\nSource: `%s`  \nCommit: `%s`  \nBuild: %s/%s/actions/runs/%s\n' \
+            "$GITHUB_REF_NAME" "$GITHUB_SHA" "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_RUN_ID" \
+            >> /tmp/release-notes.md
+          if gh release view "$tag" > /dev/null 2>&1; then
+            gh release upload "$tag" dist/*.ipa dist/*.sha256 --clobber
+          else
             args=(--verify-tag --title "MetaCine $tag" --notes-file /tmp/release-notes.md)
             if [[ "$tag" == *-* ]]; then args+=(--prerelease); fi
-            gh release create "$tag" "${args[@]}"
+            gh release create "$tag" dist/*.ipa dist/*.sha256 "${args[@]}"
           fi
-          gh release upload "$tag" dist/*.ipa dist/*.sha256 --clobber

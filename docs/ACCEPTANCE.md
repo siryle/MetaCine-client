@@ -10,10 +10,12 @@
 ## 构建发布
 
 1. 将 main 同步至 GitHub，确认 Actions 的模拟器测试和真机构建均成功。
-2. 下载 Actions artifact，确认包含 IPA 与 SHA-256，使用 `shasum -a 256 -c *.sha256` 校验。
+2. 向任意分支（含 `main`）push，确认测试和构建成功后自动生成 `v<版本>-build.<运行编号>` 预发布 Release，包含 IPA 与 SHA-256；Actions artifact 同时保留。下载后使用 `shasum -a 256 -c *.sha256` 校验。
 3. 从 Gitea 推送版本标签，确认镜像后 GitHub Release 包含相同版本 IPA。
 4. 确认构建未要求 Apple ID、证书或描述文件。IPA 内部包含 `Payload/MetaCine.app`。
 5. 使用自己的签名工具重新签名并安装，确认图标和启动页正常。
+6. 连续 push 两次，旧构建不得因新 push 自动取消；两次成功构建应各自生成 Release，标签提交与说明中的 SHA 必须对应本次构建。同一次运行重试复用对应 Release，不得改写指向其他提交的标签。
+7. PR、测试失败或构建失败时不得发布 Release；手动运行仍按「Publish the selected commit to a GitHub Release」选项决定是否发布。版本标签推送仍生成对应正式 / 预发布 Release。
 
 ## 服务器
 

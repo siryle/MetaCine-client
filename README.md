@@ -38,7 +38,7 @@ MetaCine 的原生 iPhone 客户端，使用 SwiftUI，最低支持 iOS 17。无
 
 | 触发方式 | 结果 |
 | --- | --- |
-| 推送 `main` | iPhone 模拟器测试 → Release 真机编译 → 上传未签名 IPA 与 SHA-256 为 Actions artifact |
+| 推送任意分支（含 `main`） | iPhone 模拟器测试 → Release 真机编译 → 上传未签名 IPA 与 SHA-256 为 Actions artifact，并自动发布到独立的 GitHub 预发布 Release |
 | 针对 `main` 的 Pull Request | 执行同样的测试与构建，不发布 Release |
 | 推送 `v1.0.0` 等版本标签 | 测试及构建通过后自动创建 GitHub Release，上传 IPA 和 SHA-256 |
 | 手动 Run workflow | 填写版本号；默认仅上传 artifact，可选发布对应提交的预发布 Release |
@@ -55,9 +55,11 @@ git push origin v1.0.0
 
 Gitea 镜像将版本标签同步至 GitHub 后触发发布。只有模拟器测试和真机构建都成功才会发布。主版本号使用三个数字段（如 `1.0.0`）；`v1.1.0-beta.1` 形式的标签会产生 iOS 版本号 `1.1.0` 和 GitHub 预发布版本。构建号使用 GitHub Actions 的运行编号。
 
+每次分支 push 成功构建后都会生成 `v<版本>-build.<运行编号>` 预发布 Release，附带本次 IPA 和 SHA-256，不需要再推送版本标签或手动点击发布。连续 push 不会自动取消之前的构建，各次成功构建分别保留对应的 Release。PR 不发布 Release，测试或构建失败也不发布。
+
 测试通过后还会实际安装并启动模拟器 App，上传 `iPhone-launch-preview` 截图 artifact，供检查首次启动界面。
 
-手动发布使用 `v<版本>-build.<运行编号>` 标签，指向本次选定提交，避免误把另一个分支的代码打包成既有正式版本。日常正式版本优先从 Gitea 推送标签，保持镜像两端一致。
+分支自动发布和手动发布都使用 `v<版本>-build.<运行编号>` 标签，并绑定本次构建的准确提交；Release 说明包含来源分支或标签、提交 SHA 和 Actions 链接。同一次运行重试会复用该 Release 并更新附件；已有同名标签指向其他提交时会停止发布。正式版本仍从 Gitea 推送 `v1.0.0` 等标签，保持镜像两端一致。
 
 产物：
 
