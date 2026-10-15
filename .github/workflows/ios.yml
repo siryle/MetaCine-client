@@ -1,0 +1,139 @@
+name: iOS Build and Release
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "IPA version (for example 1.0.0)"
+        required: true
+        default: "1.0.0"
+      publish_release:
+        description: "Publish the selected commit to a GitHub Release"
+        required: true
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref_type != 'tag' }}
+
+jobs:
+  test:
+    name: iPhone Simulator Tests
+    runs-on: macos-15
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Show Xcode version
+        run: xcodebuild -version
+      - name: Validate project and repository
+        run: |
+          node scripts/generate-project.mjs
+          python3 scripts/validate-project.py
+          git diff --exit-code -- MetaCine.xcodeproj
+      - name: Run unit and API contract tests
+        run: bash scripts/test-ios.sh
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: iOS-test-results
+          path: build/*.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
+  build:
+    name: Unsigned iPhone IPA
+    needs: test
+    runs-on: macos-15
+    timeout-minutes: 25
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            version="${GITHUB_REF_NAME#v}"
+            version="${version%%-*}"
+          elif [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            version="$INPUT_VERSION"
+          else
+            version="1.0.0"
+          fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Version must match major.minor.patch" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - name: Build and package without signing
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+          BUILD_NUMBER: ${{ github.run_number }}
+        run: bash scripts/build-unsigned-ipa.sh
+      - name: Upload IPA and checksum
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: MetaCine-${{ steps.version.outputs.version }}-unsigned
+          path: |
+            dist/*.ipa
+            dist/*.sha256
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: github.event_name != 'pull_request' && (github.ref_type == 'tag' || (github.event_name == 'workflow_dispatch' && inputs.publish_release))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: MetaCine-${{ needs.build.outputs.version }}-unsigned
+          path: dist
+      - name: Create Release and upload IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="v${VERSION}-build.${GITHUB_RUN_NUMBER}"
+            git tag "$tag" "$GITHUB_SHA"
+            git push origin "refs/tags/$tag"
+          fi
+          cat > /tmp/release-notes.md <<'NOTES'
+          Native iPhone client for MetaCine (iOS 17+).
+
+          - Douban / TMDB poster rankings and subscriptions
+          - Resource search and transfer
+          - Subscription management and task history
+          - Multiple servers, Keychain credentials and server settings
+
+          This IPA is unsigned. Sign it with your own Apple identity or a compatible sideloading tool before installation. No signing certificate or Apple account is used by this workflow.
+
+          Download the `.sha256` file to verify the IPA checksum.
+          NOTES
+          if ! gh release view "$tag" > /dev/null 2>&1; then
+            args=(--verify-tag --title "MetaCine $tag" --notes-file /tmp/release-notes.md)
+            if [[ "$tag" == *-* ]]; then args+=(--prerelease); fi
+            gh release create "$tag" "${args[@]}"
+          fi
+          gh release upload "$tag" dist/*.ipa dist/*.sha256 --clobber

@@ -1,0 +1,545 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {};
+	objectVersion = 56;
+	objects = {
+		326341E431897ED3EED56432 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/App/MetaCineApp.swift";
+			sourceTree = "<group>";
+		};
+		77AA3B4EBFD55DD38446D12F = {
+			isa = PBXBuildFile;
+			fileRef = 326341E431897ED3EED56432;
+		};
+		E32DB7B38E669C1E564044F6 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/App/RootView.swift";
+			sourceTree = "<group>";
+		};
+		C7E1E017EF9EF1E364655476 = {
+			isa = PBXBuildFile;
+			fileRef = E32DB7B38E669C1E564044F6;
+		};
+		A48558ADBDB1C1C28BA518E8 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Core/APIClient.swift";
+			sourceTree = "<group>";
+		};
+		1052B5BBDF82C107329020C9 = {
+			isa = PBXBuildFile;
+			fileRef = A48558ADBDB1C1C28BA518E8;
+		};
+		43DB91214729FCED67C185AB = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Core/AppStore.swift";
+			sourceTree = "<group>";
+		};
+		ECC2BB77E262EB1072299882 = {
+			isa = PBXBuildFile;
+			fileRef = 43DB91214729FCED67C185AB;
+		};
+		9DD19B7D390E87C2B9D53567 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Core/CredentialStore.swift";
+			sourceTree = "<group>";
+		};
+		3E87717D65530A01390F254B = {
+			isa = PBXBuildFile;
+			fileRef = 9DD19B7D390E87C2B9D53567;
+		};
+		E1223516FD2914FCCA990C61 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Core/Models.swift";
+			sourceTree = "<group>";
+		};
+		195AE30D746B9A43C36976FF = {
+			isa = PBXBuildFile;
+			fileRef = E1223516FD2914FCCA990C61;
+		};
+		6FD310A9098775DC2CB03AA5 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Features/Discover/DiscoverView.swift";
+			sourceTree = "<group>";
+		};
+		BA209EA4FF2FB69CCC651333 = {
+			isa = PBXBuildFile;
+			fileRef = 6FD310A9098775DC2CB03AA5;
+		};
+		85B494FF9FAAC3ED63939AEA = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Features/Discover/MediaDetailView.swift";
+			sourceTree = "<group>";
+		};
+		09954D9FA9C779BF7B4B8DA4 = {
+			isa = PBXBuildFile;
+			fileRef = 85B494FF9FAAC3ED63939AEA;
+		};
+		9E6F30001F98D38C47B5DCF1 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Features/History/HistoryView.swift";
+			sourceTree = "<group>";
+		};
+		4B10F202E1DFFCEE3F46A970 = {
+			isa = PBXBuildFile;
+			fileRef = 9E6F30001F98D38C47B5DCF1;
+		};
+		351BB4DB94C6C0A160285057 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Features/History/JobDetailView.swift";
+			sourceTree = "<group>";
+		};
+		599FAFF5030CD83866AC87D1 = {
+			isa = PBXBuildFile;
+			fileRef = 351BB4DB94C6C0A160285057;
+		};
+		9609B07CAC323F1CB827EE27 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Features/Search/ResourceSearchView.swift";
+			sourceTree = "<group>";
+		};
+		B82923903DD849878F37F889 = {
+			isa = PBXBuildFile;
+			fileRef = 9609B07CAC323F1CB827EE27;
+		};
+		F19939ABEC365853E0A45699 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Features/Servers/ServerEditor.swift";
+			sourceTree = "<group>";
+		};
+		7209C597090C9C97BEE711C7 = {
+			isa = PBXBuildFile;
+			fileRef = F19939ABEC365853E0A45699;
+		};
+		66632BC2EB541A0FBE8306E3 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Features/Servers/ServerSettingsView.swift";
+			sourceTree = "<group>";
+		};
+		7A97C44D16B12240CBF67E52 = {
+			isa = PBXBuildFile;
+			fileRef = 66632BC2EB541A0FBE8306E3;
+		};
+		6A527DA7E72FB022607CF4B3 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Features/Servers/ServersView.swift";
+			sourceTree = "<group>";
+		};
+		FE91DE7028A2EB3BA2A8BC67 = {
+			isa = PBXBuildFile;
+			fileRef = 6A527DA7E72FB022607CF4B3;
+		};
+		C44B40A50B25206D2A0B4273 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Features/Subscriptions/SubscriptionEditor.swift";
+			sourceTree = "<group>";
+		};
+		6711BACB0BAD93CB3F45FD5F = {
+			isa = PBXBuildFile;
+			fileRef = C44B40A50B25206D2A0B4273;
+		};
+		E4529A4CC3C8AD8A40BCB8AC = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Features/Subscriptions/SubscriptionsView.swift";
+			sourceTree = "<group>";
+		};
+		3B2638925C2606AFC3F79C9C = {
+			isa = PBXBuildFile;
+			fileRef = E4529A4CC3C8AD8A40BCB8AC;
+		};
+		A4D505CEB1DC49132E107238 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/UI/Components.swift";
+			sourceTree = "<group>";
+		};
+		42E85109786C12731BFEB5F6 = {
+			isa = PBXBuildFile;
+			fileRef = A4D505CEB1DC49132E107238;
+		};
+		9EED99DAE7937A80E08B4AB9 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCineTests/APIClientTests.swift";
+			sourceTree = "<group>";
+		};
+		D2AFA97BEDBA1EBCEE67F6F9 = {
+			isa = PBXBuildFile;
+			fileRef = 9EED99DAE7937A80E08B4AB9;
+		};
+		7EA5EF9A8675960614F18BD4 = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCineTests/ModelContractTests.swift";
+			sourceTree = "<group>";
+		};
+		1FB89E2483C60269E1EB56CB = {
+			isa = PBXBuildFile;
+			fileRef = 7EA5EF9A8675960614F18BD4;
+		};
+		8BF729FFE074CAEE622C0292 = {
+			isa = PBXFileReference;
+			lastKnownFileType = folder.assetcatalog;
+			path = "MetaCine/Resources/Assets.xcassets";
+			sourceTree = "<group>";
+		};
+		9CEEC13202AFBF12EE3ABB99 = {
+			isa = PBXFileReference;
+			lastKnownFileType = text.plist.xml;
+			path = "MetaCine/Resources/Info.plist";
+			sourceTree = "<group>";
+		};
+		999FF37E9C5A0FFB78E1CDE2 = {
+			isa = PBXBuildFile;
+			fileRef = 8BF729FFE074CAEE622C0292;
+		};
+		81F31879437340D5CD6ED968 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.application;
+			includeInIndex = 0;
+			path = "MetaCine.app";
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		70F09BF32F6D77A92FF191B4 = {
+			isa = PBXFileReference;
+			explicitFileType = wrapper.cfbundle;
+			includeInIndex = 0;
+			path = "MetaCineTests.xctest";
+			sourceTree = BUILT_PRODUCTS_DIR;
+		};
+		0A3E27B8CA818264D75C8D81 = {
+			isa = PBXGroup;
+			children = (
+				81F31879437340D5CD6ED968,
+				70F09BF32F6D77A92FF191B4,
+			);
+			name = "Products";
+			sourceTree = "<group>";
+		};
+		085ED06E573690BA3A56BC1E = {
+			isa = PBXGroup;
+			children = (
+				326341E431897ED3EED56432,
+				E32DB7B38E669C1E564044F6,
+				A48558ADBDB1C1C28BA518E8,
+				43DB91214729FCED67C185AB,
+				9DD19B7D390E87C2B9D53567,
+				E1223516FD2914FCCA990C61,
+				6FD310A9098775DC2CB03AA5,
+				85B494FF9FAAC3ED63939AEA,
+				9E6F30001F98D38C47B5DCF1,
+				351BB4DB94C6C0A160285057,
+				9609B07CAC323F1CB827EE27,
+				F19939ABEC365853E0A45699,
+				66632BC2EB541A0FBE8306E3,
+				6A527DA7E72FB022607CF4B3,
+				C44B40A50B25206D2A0B4273,
+				E4529A4CC3C8AD8A40BCB8AC,
+				A4D505CEB1DC49132E107238,
+				8BF729FFE074CAEE622C0292,
+				9CEEC13202AFBF12EE3ABB99,
+			);
+			name = "MetaCine";
+			sourceTree = "<group>";
+		};
+		D60409337774CCE94860379A = {
+			isa = PBXGroup;
+			children = (
+				9EED99DAE7937A80E08B4AB9,
+				7EA5EF9A8675960614F18BD4,
+			);
+			name = "MetaCineTests";
+			sourceTree = "<group>";
+		};
+		E991C021ABBD2DA6DF032C23 = {
+			isa = PBXGroup;
+			children = (
+				085ED06E573690BA3A56BC1E,
+				D60409337774CCE94860379A,
+				0A3E27B8CA818264D75C8D81,
+			);
+			sourceTree = "<group>";
+		};
+		17655138DE091C505416ABEA = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				77AA3B4EBFD55DD38446D12F,
+				C7E1E017EF9EF1E364655476,
+				1052B5BBDF82C107329020C9,
+				ECC2BB77E262EB1072299882,
+				3E87717D65530A01390F254B,
+				195AE30D746B9A43C36976FF,
+				BA209EA4FF2FB69CCC651333,
+				09954D9FA9C779BF7B4B8DA4,
+				4B10F202E1DFFCEE3F46A970,
+				599FAFF5030CD83866AC87D1,
+				B82923903DD849878F37F889,
+				7209C597090C9C97BEE711C7,
+				7A97C44D16B12240CBF67E52,
+				FE91DE7028A2EB3BA2A8BC67,
+				6711BACB0BAD93CB3F45FD5F,
+				3B2638925C2606AFC3F79C9C,
+				42E85109786C12731BFEB5F6,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		1B85B821D2F93F337F70D49F = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D18FD5E61A9286359343951E = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				999FF37E9C5A0FFB78E1CDE2,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D7934D1E5431E43D00EE518B = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				D2AFA97BEDBA1EBCEE67F6F9,
+				1FB89E2483C60269E1EB56CB,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EEA7B40FF0F394BC78EAA36E = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		9F6A4E941DE57E85FA5BABF0 = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = ();
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		184B519F8E1416CCE38CFFD7 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = "YES";
+				CLANG_ENABLE_OBJC_ARC = "YES";
+				CLANG_WARN_DOCUMENTATION_COMMENTS = "YES";
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = "YES";
+				GCC_C_LANGUAGE_STANDARD = "gnu17";
+				IPHONEOS_DEPLOYMENT_TARGET = "17.0";
+				SDKROOT = "iphoneos";
+				SWIFT_VERSION = "5.0";
+				SWIFT_STRICT_CONCURRENCY = "targeted";
+				ENABLE_USER_SCRIPT_SANDBOXING = "YES";
+				DEBUG_INFORMATION_FORMAT = "dwarf";
+				ENABLE_TESTABILITY = "YES";
+				GCC_OPTIMIZATION_LEVEL = "0";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = "Debug";
+		};
+		A824290273A346217D9BE6F4 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CLANG_ENABLE_MODULES = "YES";
+				CLANG_ENABLE_OBJC_ARC = "YES";
+				CLANG_WARN_DOCUMENTATION_COMMENTS = "YES";
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = "YES";
+				GCC_C_LANGUAGE_STANDARD = "gnu17";
+				IPHONEOS_DEPLOYMENT_TARGET = "17.0";
+				SDKROOT = "iphoneos";
+				SWIFT_VERSION = "5.0";
+				SWIFT_STRICT_CONCURRENCY = "targeted";
+				ENABLE_USER_SCRIPT_SANDBOXING = "YES";
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				SWIFT_COMPILATION_MODE = "wholemodule";
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+			};
+			name = "Release";
+		};
+		1922B098E983995960BE56B0 = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				184B519F8E1416CCE38CFFD7,
+				A824290273A346217D9BE6F4,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = "Release";
+		};
+		0D9B6C467828201280D620A8 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = "app.metacine.ios";
+				INFOPLIST_FILE = "MetaCine/Resources/Info.plist";
+				GENERATE_INFOPLIST_FILE = "NO";
+				MARKETING_VERSION = "1.0.0";
+				CURRENT_PROJECT_VERSION = "1";
+				TARGETED_DEVICE_FAMILY = "1";
+				SUPPORTS_MACCATALYST = "NO";
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = "NO";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				CODE_SIGN_STYLE = "Automatic";
+				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "AccentColor";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				ENABLE_PREVIEWS = "YES";
+				SWIFT_EMIT_LOC_STRINGS = "YES";
+			};
+			name = "Debug";
+		};
+		E532E4CDC1E6865CE523475E = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = "app.metacine.ios";
+				INFOPLIST_FILE = "MetaCine/Resources/Info.plist";
+				GENERATE_INFOPLIST_FILE = "NO";
+				MARKETING_VERSION = "1.0.0";
+				CURRENT_PROJECT_VERSION = "1";
+				TARGETED_DEVICE_FAMILY = "1";
+				SUPPORTS_MACCATALYST = "NO";
+				SUPPORTS_MAC_DESIGNED_FOR_IPHONE_IPAD = "NO";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				CODE_SIGN_STYLE = "Automatic";
+				ASSETCATALOG_COMPILER_APPICON_NAME = "AppIcon";
+				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = "AccentColor";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
+				ENABLE_PREVIEWS = "YES";
+				SWIFT_EMIT_LOC_STRINGS = "YES";
+			};
+			name = "Release";
+		};
+		7FA7C6DD60DC323C7F3FA76C = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				0D9B6C467828201280D620A8,
+				E532E4CDC1E6865CE523475E,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = "Release";
+		};
+		2D78CCEA355AAA4DECA10BA5 = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = "app.metacine.ios.tests";
+				GENERATE_INFOPLIST_FILE = "YES";
+				TARGETED_DEVICE_FAMILY = "1";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MetaCine.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/MetaCine";
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+			};
+			name = "Debug";
+		};
+		F1D4FEDE61515AFDB9B202CA = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_BUNDLE_IDENTIFIER = "app.metacine.ios.tests";
+				GENERATE_INFOPLIST_FILE = "YES";
+				TARGETED_DEVICE_FAMILY = "1";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/MetaCine.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/MetaCine";
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks @loader_path/Frameworks";
+			};
+			name = "Release";
+		};
+		3AC24B37B5C6634D049790CE = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				2D78CCEA355AAA4DECA10BA5,
+				F1D4FEDE61515AFDB9B202CA,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = "Release";
+		};
+		1241936D4DD3AAD68FE7BFBD = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 244210E48437B6556980A702;
+			proxyType = 1;
+			remoteGlobalIDString = 8C1A045E96B998B40533C7FF;
+			remoteInfo = "MetaCine";
+		};
+		F26350DAFE3F19AABFD69AC4 = {
+			isa = PBXTargetDependency;
+			target = 8C1A045E96B998B40533C7FF;
+			targetProxy = 1241936D4DD3AAD68FE7BFBD;
+		};
+		8C1A045E96B998B40533C7FF = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 7FA7C6DD60DC323C7F3FA76C;
+			buildPhases = (
+				17655138DE091C505416ABEA,
+				1B85B821D2F93F337F70D49F,
+				D18FD5E61A9286359343951E,
+			);
+			buildRules = ();
+			dependencies = ();
+			name = "MetaCine";
+			productName = "MetaCine";
+			productReference = 81F31879437340D5CD6ED968;
+			productType = "com.apple.product-type.application";
+		};
+		2ADDEE89B29C55E11126D89F = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 3AC24B37B5C6634D049790CE;
+			buildPhases = (
+				D7934D1E5431E43D00EE518B,
+				EEA7B40FF0F394BC78EAA36E,
+				9F6A4E941DE57E85FA5BABF0,
+			);
+			buildRules = ();
+			dependencies = (
+				F26350DAFE3F19AABFD69AC4,
+			);
+			name = "MetaCineTests";
+			productName = "MetaCineTests";
+			productReference = 70F09BF32F6D77A92FF191B4;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		244210E48437B6556980A702 = {
+			isa = PBXProject;
+			attributes = { LastUpgradeCheck = 1600; BuildIndependentTargetsInParallel = YES; };
+			buildConfigurationList = 1922B098E983995960BE56B0;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = "zh_CN";
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				"en",
+				"zh-Hans",
+				"Base",
+			);
+			mainGroup = E991C021ABBD2DA6DF032C23;
+			productRefGroup = 0A3E27B8CA818264D75C8D81;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				8C1A045E96B998B40533C7FF,
+				2ADDEE89B29C55E11126D89F,
+			);
+		};
+	};
+	rootObject = 244210E48437B6556980A702;
+}
