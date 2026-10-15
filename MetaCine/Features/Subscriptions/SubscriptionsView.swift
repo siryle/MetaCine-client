@@ -11,7 +11,7 @@ struct SubscriptionsView: View {
     @State private var draft: SubscriptionDraft?
     @State private var deleting: ResourceSubscription?
     @State private var notice: InlineNotice?
-    @State private var refreshID = UUID()
+    @State private var requestID = UUID()
 
     private var visible: [ResourceSubscription] {
         subscriptions.filter {
@@ -55,7 +55,7 @@ struct SubscriptionsView: View {
                     }.padding(20)
                 }
                 .refreshable { await load() }
-                .task(id: refreshID) { await load() }
+                .task(id: store.subscriptionsRevision) { await load() }
                 .task(id: scenePhase) {
                     guard scenePhase == .active else { return }
                     while !Task.isCancelled {
@@ -79,7 +79,7 @@ struct SubscriptionsView: View {
                         .accessibilityLabel("新增订阅").disabled(!store.isConnected)
                 }
             }
-            .sheet(item: $draft) { value in SubscriptionEditor(draft: value) { refreshID = UUID() } }
+            .sheet(item: $draft) { value in SubscriptionEditor(draft: value) }
             .confirmationDialog("删除订阅？", isPresented: Binding(
                 get: { deleting != nil }, set: { if !$0 { deleting = nil } }
             ), titleVisibility: .visible, presenting: deleting) { sub in
@@ -154,18 +154,21 @@ struct SubscriptionsView: View {
     }
 
     @MainActor private func load(silent: Bool = false) async {
-        guard !loading else { return }
+        if silent && loading { return }
+        let identity = UUID()
+        requestID = identity
         loading = true
-        defer { loading = false }
+        defer { if requestID == identity { loading = false } }
         do {
             let values: [ResourceSubscription]? = try await store.requireClient().get("api/resources/subscriptions")
             try Task.checkCancellation()
+            guard requestID == identity else { return }
             subscriptions = (values ?? []).sorted {
                 (ServerDate.parse($0.createdAt) ?? .distantPast) > (ServerDate.parse($1.createdAt) ?? .distantPast)
             }
             error = nil
         } catch {
-            if !silent, !isCancellation(error) { self.error = error.localizedDescription }
+            if !silent, !isCancellation(error), requestID == identity { self.error = error.localizedDescription }
         }
     }
 
@@ -176,7 +179,7 @@ struct SubscriptionsView: View {
             var value = sub.draft
             value.enabled.toggle()
             let _: ResourceSubscription = try await store.requireClient().send("PUT", "api/resources/subscriptions/\(sub.id)", body: value)
-            await load()
+            store.subscriptionsDidChange()
         } catch { showError(error) }
     }
 
@@ -219,7 +222,7 @@ struct SubscriptionsView: View {
         defer { busy.remove(sub.id) }
         do {
             try await store.requireClient().perform("DELETE", "api/resources/subscriptions/\(sub.id)", body: EmptyBody())
-            await load()
+            store.subscriptionsDidChange()
         } catch { showError(error) }
     }
 

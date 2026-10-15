@@ -67,6 +67,50 @@ final class ModelContractTests: XCTestCase {
         XCTAssertNil(json["last_job_id"])
     }
 
+    func testSubscribedBadgeMatchesTMDBIdentityOrNormalizedTitleAndYear() async throws {
+        let json = """
+        {"id":42,"source":"tmdb","kind":"tv","title":"Example Show","year":2026}
+        """
+        let media = try APIClient.decoder.decode(MediaItem.self, from: Data(json.utf8))
+        XCTAssertTrue(try badgeSubscription(title: "Translated title", tmdbID: 42, year: 2025).matches(media))
+        XCTAssertTrue(try badgeSubscription(title: "EXAMPLE: Show!", year: 2026).matches(media))
+        XCTAssertFalse(try badgeSubscription(title: "Example Show", year: 2025).matches(media))
+        XCTAssertFalse(try badgeSubscription(title: "Example Show", tmdbID: 42, kind: "movie").matches(media))
+        XCTAssertFalse(try badgeSubscription(title: "Another Show").matches(media))
+    }
+
+    func testSubscribedBadgeDoesNotTreatDoubanIDAsTMDBIdentity() async throws {
+        let json = """
+        {"id":42,"douban_id":"42","source":"douban","kind":"tv","title":"Example Show","year":2026}
+        """
+        let media = try APIClient.decoder.decode(MediaItem.self, from: Data(json.utf8))
+        XCTAssertFalse(try badgeSubscription(title: "Another Show", tmdbID: 42).matches(media))
+        XCTAssertTrue(try badgeSubscription(title: "Example Show", tmdbID: 100).matches(media))
+    }
+
+    func testSubscribedBadgeIncludesPausedSeasonsAndRankingsWithoutYears() async throws {
+        let json = """
+        {"id":0,"douban_id":"123","source":"douban","kind":"tv","title":"Example Show"}
+        """
+        let media = try APIClient.decoder.decode(MediaItem.self, from: Data(json.utf8))
+        let pausedSeason = try badgeSubscription(title: "Example Show", year: 2026, season: 2, enabled: false)
+        XCTAssertTrue(pausedSeason.matches(media))
+        XCTAssertFalse(try badgeSubscription(title: "Another Show", year: 2026).matches(media))
+    }
+
+    private func badgeSubscription(
+        title: String, tmdbID: Int = 0, kind: String = "tv",
+        year: Int = 2026, season: Int = 0, enabled: Bool = true
+    ) throws -> ResourceSubscription {
+        let object: [String: Any] = [
+            "id": "sub1", "title": title, "tmdb_id": tmdbID, "kind": kind,
+            "year": year, "season": season, "enabled": enabled, "resource_type": "any",
+            "interval_minutes": 60, "created_at": "2026-10-15T10:00:00Z"
+        ]
+        let data = try JSONSerialization.data(withJSONObject: object)
+        return try APIClient.decoder.decode(ResourceSubscription.self, from: data)
+    }
+
     func testSubscriptionValidationMatchesBackendByteLimits() async throws {
         var draft = SubscriptionDraft()
         XCTAssertThrowsError(try draft.validated())

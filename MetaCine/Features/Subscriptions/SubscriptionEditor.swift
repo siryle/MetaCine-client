@@ -4,7 +4,6 @@ struct SubscriptionEditor: View {
     @Environment(AppStore.self) private var store
     @Environment(\.dismiss) private var dismiss
     @State var draft: SubscriptionDraft
-    var onSaved: (() -> Void)?
     @State private var saving = false
     @State private var error: String?
 
@@ -76,7 +75,7 @@ struct SubscriptionEditor: View {
             let _: ResourceSubscription = try await store.requireClient().send(
                 value.id == nil ? "POST" : "PUT", path, body: value
             )
-            onSaved?()
+            store.subscriptionsDidChange()
             dismiss()
         } catch {
             if !isCancellation(error) { self.error = error.localizedDescription }

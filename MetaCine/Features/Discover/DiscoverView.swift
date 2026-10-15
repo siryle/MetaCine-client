@@ -21,6 +21,7 @@ private struct RankingFilter: Equatable {
 
 struct DiscoverView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.scenePhase) private var scenePhase
     @State private var filter = RankingFilter()
     @State private var items: [MediaItem] = []
     @State private var availability: Set<String> = []
@@ -31,6 +32,11 @@ struct DiscoverView: View {
     @State private var availabilityNote: String?
     @State private var selection: MediaItem?
     @State private var requestID = UUID()
+    @State private var subscriptions: [ResourceSubscription]?
+    @State private var subscriptionsError: String?
+    @State private var subscriptionsRequestID = UUID()
+    @State private var subscribing: Set<String> = []
+    @State private var notice: InlineNotice?
 
     var body: some View {
         NavigationStack {
@@ -43,16 +49,17 @@ struct DiscoverView: View {
                         if let availabilityNote {
                             Text(availabilityNote).font(.caption).foregroundStyle(.secondary)
                         }
+                        if let subscriptionsError {
+                            ErrorBanner(message: subscriptionsError) { Task { await loadSubscriptions() } }
+                        }
                         if items.isEmpty, loading {
                             ProgressView("正在发现好作品…").frame(maxWidth: .infinity).padding(.vertical, 70)
                         } else if items.isEmpty, error == nil {
                             ContentUnavailableView("暂无榜单", systemImage: "film", description: Text("试试其他分类或下拉刷新。"))
                         } else {
                             LazyVGrid(columns: [GridItem(.adaptive(minimum: 145), spacing: 16)], spacing: 24) {
-                                ForEach(Array(items.enumerated()), id: \.element.stableID) { index, item in
-                                    Button { selection = item } label: {
-                                        posterCard(item, rank: index + 1)
-                                    }.buttonStyle(.plain)
+                                ForEach(items, id: \.stableID) { item in
+                                    posterCard(item)
                                 }
                             }
                             if hasMore {
@@ -68,14 +75,22 @@ struct DiscoverView: View {
                     }
                     .padding(20)
                 }
-                .refreshable { await load(reset: true) }
+                .refreshable {
+                    await load(reset: true)
+                    await loadSubscriptions()
+                }
                 .task(id: filter) { await load(reset: true) }
+                .task(id: "\(store.subscriptionsRevision):\(store.selectedTab == .discover && scenePhase == .active)") {
+                    guard store.selectedTab == .discover, scenePhase == .active else { return }
+                    await loadSubscriptions()
+                }
             }
             .background(CineBackdrop())
             .navigationTitle("发现")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { ServerIndicator() } }
             .sheet(item: $selection) { item in MediaDetailView(item: item) }
+            .cineNotice($notice)
         }
     }
 
@@ -144,34 +159,131 @@ struct DiscoverView: View {
         .onChange(of: filter.kind) { _, _ in filter.tag = "热门" }
     }
 
-    private func posterCard(_ item: MediaItem, rank: Int) -> some View {
+    private func posterCard(_ item: MediaItem) -> some View {
         VStack(alignment: .leading, spacing: 9) {
-            PosterView(path: item.poster).aspectRatio(2 / 3, contentMode: .fit)
-                .overlay(alignment: .topLeading) {
-                    Text(String(format: "%02d", rank))
-                        .font(.system(.caption, design: .monospaced).bold()).padding(7)
-                        .foregroundStyle(.white).background(.black.opacity(0.65), in: RoundedRectangle(cornerRadius: 8))
-                        .padding(9)
-                }
-                .overlay(alignment: .bottomTrailing) {
-                    if let rating = item.rating, rating > 0 {
-                        Label(String(format: "%.1f", rating), systemImage: "star.fill")
-                            .font(.caption.bold()).foregroundStyle(.white)
-                            .padding(7).background(.black.opacity(0.7), in: Capsule()).padding(8)
-                    }
-                }
-                .clipShape(RoundedRectangle(cornerRadius: 15))
-            HStack(alignment: .firstTextBaseline, spacing: 5) {
-                Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(2)
-                Spacer(minLength: 0)
-                if availability.contains(item.stableID) {
-                    Image(systemName: "checkmark.seal.fill").foregroundStyle(CineTheme.accent)
-                        .font(.caption).accessibilityLabel("缓存中有资源")
+            Button { selection = item } label: {
+                PosterView(path: item.poster).aspectRatio(2 / 3, contentMode: .fit)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("查看\(item.title)详情")
+            .overlay(alignment: .topLeading) {
+                if let rating = item.rating, rating > 0 {
+                    Text(String(format: "%.1f", rating))
+                        .font(.caption.bold()).foregroundStyle(.white)
+                        .padding(7).background(.black.opacity(0.7), in: Capsule()).padding(8)
+                        .accessibilityLabel("评分 \(String(format: "%.1f", rating))")
+                        .allowsHitTesting(false)
                 }
             }
-            Text(item.subtitle).font(.caption).foregroundStyle(.secondary)
+            .overlay(alignment: .bottom) {
+                HStack(alignment: .bottom, spacing: 4) {
+                    if availability.contains(item.stableID) {
+                        Text("有资源").font(.caption2.bold()).foregroundStyle(.white)
+                            .padding(.horizontal, 7).padding(.vertical, 6)
+                            .background(CineTheme.accent, in: Capsule())
+                            .accessibilityLabel("缓存频道中有匹配资源")
+                            .allowsHitTesting(false)
+                    }
+                    Spacer(minLength: 0)
+                    subscriptionControl(item)
+                }
+                .padding(8)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 15))
+            Button { selection = item } label: {
+                VStack(alignment: .leading, spacing: 9) {
+                    Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(2)
+                    Text(item.subtitle).font(.caption).foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }.buttonStyle(.plain)
         }.frame(maxHeight: .infinity, alignment: .top)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
+    }
+
+    private func isSubscribed(_ item: MediaItem) -> Bool {
+        subscriptions?.contains(where: { $0.matches(item) }) == true
+    }
+
+    @ViewBuilder
+    private func subscriptionControl(_ item: MediaItem) -> some View {
+        if isSubscribed(item) {
+            subscriptionBadge("已订阅")
+                .allowsHitTesting(false)
+        } else {
+            let busy = subscribing.contains(item.stableID)
+            Button { Task { await subscribe(item) } } label: {
+                subscriptionBadge(busy ? "订阅中" : "订阅", loading: busy)
+            }
+            .buttonStyle(.plain)
+            .disabled(subscriptions == nil || busy)
+            .accessibilityLabel("订阅\(item.title)")
+            .accessibilityHint(subscriptions == nil ? "等待订阅状态加载完成" : "使用默认偏好一键订阅")
+        }
+    }
+
+    private func subscriptionBadge(_ title: String, loading: Bool = false) -> some View {
+        HStack(spacing: 4) {
+            if loading { ProgressView().tint(.white).controlSize(.mini) }
+            Text(title)
+        }
+        .font(.caption2.bold()).foregroundStyle(.white)
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .background(.black.opacity(0.7), in: Capsule())
+    }
+
+    @MainActor
+    private func loadSubscriptions() async {
+        let identity = UUID()
+        subscriptionsRequestID = identity
+        do {
+            let values: [ResourceSubscription]? = try await store.requireClient().get("api/resources/subscriptions")
+            try Task.checkCancellation()
+            guard subscriptionsRequestID == identity else { return }
+            subscriptions = values ?? []
+            subscriptionsError = nil
+        } catch {
+            if !isCancellation(error), subscriptionsRequestID == identity {
+                subscriptionsError = "订阅状态加载失败：\(error.localizedDescription)"
+            }
+        }
+    }
+
+    @MainActor
+    private func subscribe(_ item: MediaItem) async {
+        guard subscriptions != nil, !isSubscribed(item), subscribing.insert(item.stableID).inserted else { return }
+        let context = store.contextID
+        defer { subscribing.remove(item.stableID) }
+        do {
+            let api = try store.requireClient()
+            var draft = item.subscription()
+            // Douban tag rankings can omit the year; resolve it before saving, as the server UI does.
+            if item.source?.hasPrefix("douban") == true, draft.year == 0 {
+                guard let id = item.doubanID, !id.isEmpty, id.allSatisfy(\.isNumber) else {
+                    throw APIError.validation("豆瓣条目缺少有效 ID。")
+                }
+                let detail: MediaDetail = try await api.get(
+                    "api/resources/rankings/douban/\(id)",
+                    query: [URLQueryItem(name: "kind", value: item.kind)]
+                )
+                draft.year = detail.year ?? draft.year
+                draft.originalTitle = detail.originalTitle ?? draft.originalTitle
+                draft.poster = detail.poster ?? draft.poster
+            }
+            let saved: ResourceSubscription = try await api.send(
+                "POST", "api/resources/subscriptions", body: draft.validated()
+            )
+            guard store.contextID == context else { return }
+            // Discard any older list response so it cannot erase the subscription just saved.
+            subscriptionsRequestID = UUID()
+            subscriptions?.append(saved)
+            store.subscriptionsDidChange()
+        } catch {
+            if !isCancellation(error), store.contextID == context {
+                notice = InlineNotice(title: "订阅失败", message: error.localizedDescription)
+                await loadSubscriptions()
+            }
+        }
     }
 
     @MainActor

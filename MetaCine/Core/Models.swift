@@ -233,6 +233,19 @@ struct ResourceSubscription: Decodable, Identifiable {
         case lastJobID = "lastJobId"
     }
 
+    func matches(_ media: MediaItem) -> Bool {
+        guard kind == media.kind else { return false }
+        // A subscription to any season, including paused ones, marks the work as subscribed.
+        if media.tmdbID > 0, tmdbID == media.tmdbID { return true }
+        // Some Douban rankings omit the year, so only compare it when it is known.
+        return ((media.year ?? 0) == 0 || (year ?? 0) == (media.year ?? 0))
+            && Self.normalizedTitle(title) == Self.normalizedTitle(media.title)
+    }
+
+    private static func normalizedTitle(_ value: String) -> String {
+        value.lowercased().replacingOccurrences(of: "[^\\p{L}\\p{N}]", with: "", options: .regularExpression)
+    }
+
     var draft: SubscriptionDraft {
         SubscriptionDraft(
             id: id, title: title, originalTitle: originalTitle ?? "", tmdbID: tmdbID ?? 0,

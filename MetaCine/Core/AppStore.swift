@@ -15,6 +15,7 @@ final class AppStore {
     private(set) var serverSession: ServerSession?
     private(set) var connection: ConnectionState = .idle
     private(set) var contextID = UUID()
+    private(set) var subscriptionsRevision = UUID()
     var selectedTab: Tab = .discover
     var searchQuery = ""
 
@@ -118,6 +119,10 @@ final class AppStore {
     func requireClient() throws -> APIClient {
         guard isConnected, let client else { throw APIError.signedOut }
         return client
+    }
+
+    func subscriptionsDidChange() {
+        subscriptionsRevision = UUID()
     }
 
     func search(for title: String) {
