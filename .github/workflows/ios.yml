@@ -41,6 +41,15 @@ jobs:
           git diff --exit-code -- MetaCine.xcodeproj
       - name: Run unit and API contract tests
         run: bash scripts/test-ios.sh
+      - name: Verify simulator launch and capture preview
+        run: bash scripts/capture-launch.sh
+      - name: Upload iPhone launch preview
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: iPhone-launch-preview
+          path: build/screenshots/*.png
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
@@ -116,8 +125,12 @@ jobs:
             tag="$GITHUB_REF_NAME"
           else
             tag="v${VERSION}-build.${GITHUB_RUN_NUMBER}"
-            git tag "$tag" "$GITHUB_SHA"
-            git push origin "refs/tags/$tag"
+            if git show-ref --verify --quiet "refs/tags/$tag"; then
+              test "$(git rev-list -n 1 "$tag")" = "$GITHUB_SHA"
+            else
+              git tag "$tag" "$GITHUB_SHA"
+              git push origin "refs/tags/$tag"
+            fi
           fi
           cat > /tmp/release-notes.md <<'NOTES'
           Native iPhone client for MetaCine (iOS 17+).

@@ -197,8 +197,8 @@ struct DiscoverView: View {
             try Task.checkCancellation()
             guard requestID == identity, filter == currentFilter else { return }
             let added = result.items ?? []
-            let known = Set(items.map(\.stableID))
-            items += added.filter { !known.contains($0.stableID) }
+            var known = Set(items.map(\.stableID))
+            items += added.filter { known.insert($0.stableID).inserted }
             page = result.page
             hasMore = result.hasMore
             // Availability is optional: a cache error must not hide the ranking.

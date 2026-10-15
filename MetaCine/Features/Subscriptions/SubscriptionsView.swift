@@ -160,7 +160,9 @@ struct SubscriptionsView: View {
         do {
             let values: [ResourceSubscription]? = try await store.requireClient().get("api/resources/subscriptions")
             try Task.checkCancellation()
-            subscriptions = (values ?? []).sorted { $0.createdAt > $1.createdAt }
+            subscriptions = (values ?? []).sorted {
+                (ServerDate.parse($0.createdAt) ?? .distantPast) > (ServerDate.parse($1.createdAt) ?? .distantPast)
+            }
             error = nil
         } catch {
             if !silent, !isCancellation(error) { self.error = error.localizedDescription }

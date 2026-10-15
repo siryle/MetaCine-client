@@ -19,11 +19,15 @@ if not devices:
 print(devices[0]["udid"])
 ')}"
 
+mkdir -p build
+printf '%s\n' "$SIMULATOR_ID" > build/simulator-id.txt
+
 xcodebuild \
     -project MetaCine.xcodeproj \
     -scheme MetaCine \
     -configuration Debug \
     -destination "platform=iOS Simulator,id=$SIMULATOR_ID" \
+    -parallel-testing-enabled NO \
     -derivedDataPath build/simulator \
     -resultBundlePath "build/TestResults-${TEST_RUN_ID:-$(date +%s)}.xcresult" \
     CODE_SIGNING_ALLOWED=NO \
