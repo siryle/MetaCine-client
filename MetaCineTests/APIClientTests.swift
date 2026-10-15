@@ -122,4 +122,90 @@ final class APIClientTests: XCTestCase {
             XCTFail("An invalidated server context must not issue requests.")
         } catch { XCTAssertTrue(error is CancellationError) }
     }
+
+    func testResourceMediaUsesVerifiedTMDBDetailsBeforeSearching() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                return (200, [:], Data(#"{"id":42,"kind":"tv","title":"Example Show","year":2026,"poster":"/poster.jpg"}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let media = try await api.resourceMedia(for: resourceIdentity(kind: "tv", tmdbID: 42))
+        XCTAssertEqual(media?.poster, "/poster.jpg")
+        XCTAssertEqual(requests.all.map { $0.url!.path }, ["/cinema/api/resources/rankings/tmdb/tv/42"])
+    }
+
+    func testResourceMediaCorrectsMislabeledChannelKinds() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
+                let query = Dictionary(uniqueKeysWithValues: (parts.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+                XCTAssertEqual(query["query"], "Example Show")
+                XCTAssertEqual(query["year"], "2026")
+                let json = query["kind"] == "tv"
+                    ? #"[{"id":42,"kind":"tv","title":"Example Show","year":2026,"poster":"/poster.jpg"}]"# : "[]"
+                return (200, [:], Data(json.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let media = try await api.resourceMedia(for: resourceIdentity(kind: "movie"))
+        XCTAssertEqual(media?.kind, "tv")
+        XCTAssertEqual(requests.all.count, 2)
+    }
+
+    func testResourceMediaLeavesAmbiguousMatchesWithoutAPoster() async throws {
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                let kind = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+                    .queryItems?.first(where: { $0.name == "kind" })?.value
+                let json = kind == "tv" ? """
+                [{"id":42,"kind":"tv","title":"Example Show","year":2026,"poster":"/first.jpg"},
+                 {"id":43,"kind":"tv","title":"Example Show","year":2026,"poster":"/second.jpg"}]
+                """ : "[]"
+                return (200, [:], Data(json.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let media = try await api.resourceMedia(for: resourceIdentity())
+        XCTAssertNil(media)
+    }
+
+    func testResourceMediaFailuresAreOptionalButCancellationPropagates() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                return (500, [:], Data(#"{"error":"TMDB unavailable"}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let identity = try resourceIdentity()
+        let media = try await api.resourceMedia(for: identity)
+        XCTAssertNil(media)
+        XCTAssertEqual(requests.all.count, 2)
+        api.invalidate()
+        do {
+            _ = try await api.resourceMedia(for: identity)
+            XCTFail("Cancelled poster lookups must stop instead of trying more candidates.")
+        } catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertEqual(requests.all.count, 2)
+    }
+
+    private func resourceIdentity(kind: String = "", tmdbID: Int = 0) throws -> ResourceMediaIdentity {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "title": "名称: Example Show (2026)", "channel": "channel", "kind": kind,
+            "post_url": "https://t.me/channel/1", "share_url": "https://115.com/s/example",
+            "type": "share", "tmdb_id": tmdbID
+        ] as [String: Any])
+        let result = try APIClient.decoder.decode(ResourceResult.self, from: data)
+        return ResourceMediaIdentity(result)
+    }
 }

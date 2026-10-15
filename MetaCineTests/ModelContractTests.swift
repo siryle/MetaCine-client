@@ -39,6 +39,41 @@ final class ModelContractTests: XCTestCase {
         XCTAssertEqual(result.subscription().resourceType, .share)
     }
 
+    func testResourceMediaIdentityRemovesChannelHeadingsAndReleaseMetadata() async throws {
+        let cases: [(String, String, Int)] = [
+            (" 名称: 天地争霸美猴王 ", "天地争霸美猴王", 0),
+            ("名称: 大闹天宫 蓝光1080P", "大闹天宫", 0),
+            ("剧集：Example Show (2026) S02E03 2160p", "Example Show", 2026),
+            ("电影：Example（1999）1080p", "Example", 1999),
+            ("Example S01E02", "Example", 0),
+            ("1984", "1984", 0)
+        ]
+        for (title, expectedTitle, expectedYear) in cases {
+            let identity = ResourceMediaIdentity(try resourceResult(title: title))
+            XCTAssertEqual(identity.title, expectedTitle, title)
+            XCTAssertEqual(identity.year, expectedYear, title)
+        }
+    }
+
+    func testResourceMediaMatchingRejectsRemakesUnrelatedTitlesAndWrongIDs() async throws {
+        let json = """
+        {"id":42,"kind":"tv","title":"Translated Show","original_title":"Example Show","year":2026}
+        """
+        let media = try APIClient.decoder.decode(MediaItem.self, from: Data(json.utf8))
+        XCTAssertTrue(ResourceMediaIdentity(try resourceResult(title: "Example Show (2026)", tmdbID: 42)).matches(media))
+        XCTAssertFalse(ResourceMediaIdentity(try resourceResult(title: "Example Show (2025)")).matches(media))
+        XCTAssertFalse(ResourceMediaIdentity(try resourceResult(title: "Another Show (2026)")).matches(media))
+        XCTAssertFalse(ResourceMediaIdentity(try resourceResult(title: "Example Show (2026)", tmdbID: 100)).matches(media))
+    }
+
+    private func resourceResult(title: String, tmdbID: Int = 0) throws -> ResourceResult {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "title": title, "channel": "channel", "post_url": "https://t.me/channel/1",
+            "share_url": "https://115.com/s/example", "type": "share", "tmdb_id": tmdbID
+        ] as [String: Any])
+        return try APIClient.decoder.decode(ResourceResult.self, from: data)
+    }
+
     func testSubscriptionRuntimeIdentityAndNullValuesDecode() async throws {
         let json = """
         {"id":"sub1","title":"测试","kind":"tv","tmdb_id":123,"resource_type":"any",
