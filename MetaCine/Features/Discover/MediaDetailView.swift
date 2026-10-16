@@ -114,7 +114,7 @@ struct MediaDetailView: View {
             let saved = try await store.requireClient().saveSubscription(subscriptionDraft())
             subscriptions?.append(saved)
             store.subscriptionsDidChange()
-            notice = InlineNotice(title: "订阅已创建", message: "已启用 RE0 和 Telegram，按 RE0 账号的默认积分上限自动解锁。")
+            notice = InlineNotice(title: "订阅已创建", message: "已启用全部资源来源，按 RE0 账号的默认积分上限自动解锁。")
         } catch {
             if !isCancellation(error) { notice = InlineNotice(title: "订阅失败", message: error.localizedDescription) }
         }

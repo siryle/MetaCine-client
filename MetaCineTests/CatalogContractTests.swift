@@ -3,6 +3,24 @@ import XCTest
 
 @MainActor
 final class CatalogContractTests: XCTestCase {
+    func testMaoyanImageAddressesNormalizeToSupportedProxyURLs() async throws {
+        let expected = "https://p0.meituan.net/movie/example.jpg"
+        for address in [
+            expected, "//p0.meituan.net/movie/example.jpg",
+            "http://p0.meituan.net/w.h/movie/example.jpg",
+            expected + "@160w_220h_1e_1c", expected + "?imageView2/1/w/160/h/220"
+        ] {
+            let resource = try PosterResource(address)
+            XCTAssertEqual(resource.endpoint, "api/resources/catalog/image")
+            XCTAssertEqual(resource.query, [URLQueryItem(name: "url", value: expected)])
+            XCTAssertEqual(resource.cacheKey, try PosterResource(expected).cacheKey)
+        }
+        let pipi = try PosterResource("//p1.pipi.cn/mediaplus/example.jpg?imageView2/1/w/160")
+        XCTAssertEqual(pipi.query.first?.value, "https://p1.pipi.cn/mediaplus/example.jpg")
+        XCTAssertThrowsError(try PosterResource("http://unknown.test/movie/example.jpg"))
+        XCTAssertThrowsError(try PosterResource("//unknown.test/movie/example.jpg"))
+    }
+
     func testRecommendationProvidersMatchBackendBoards() async throws {
         XCTAssertEqual(RecommendationProvider.all.map(\.id), [
             "popular", "netflix", "hbo", "apple", "disney", "crunchyroll",

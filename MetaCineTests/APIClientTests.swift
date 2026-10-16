@@ -54,13 +54,15 @@ private func savedSubscription(_ values: [String: Any]) throws -> Data {
 
 @MainActor
 final class APIClientTests: XCTestCase {
-    private func client() throws -> APIClient {
+    private func client(
+        profile: ServerProfile = ServerProfile(name: "测试", address: "http://example.test:8080/cinema"),
+        credential: ServerCredential = ServerCredential(username: "admin", password: "secret"),
+        posterCache: PosterCache = .shared
+    ) throws -> APIClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [StubURLProtocol.self]
         return try APIClient(
-            profile: ServerProfile(name: "测试", address: "http://example.test:8080/cinema"),
-            credential: ServerCredential(username: "admin", password: "secret"),
-            configuration: configuration
+            profile: profile, credential: credential, configuration: configuration, posterCache: posterCache
         )
     }
 
@@ -420,7 +422,7 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(requests.all.count, 1)
     }
 
-    func testResourceSearchUsesIndependentProvidersAndRE0MediaHint() async throws {
+    func testResourceSearchUsesAllProvidersAndKeepsFailuresIndependent() async throws {
         let requests = RecordedRequests()
         StubURLProtocol.lock.withLock {
             StubURLProtocol.handler = { request in
@@ -430,6 +432,10 @@ final class APIClientTests: XCTestCase {
                 if body["source"] as? String == "re0" {
                     XCTAssertEqual((body["media"] as? [String: Any])?["tmdb_id"] as? Int, 42)
                     return (503, [:], Data(#"{"error":"RE0 unavailable"}"#.utf8))
+                }
+                if body["source"] as? String == "hdhaven" {
+                    XCTAssertEqual((body["media"] as? [String: Any])?["tmdb_id"] as? Int, 42)
+                    return (200, [:], Data(#"{"results":[],"warnings":[]}"#.utf8))
                 }
                 XCTAssertEqual(body["source"] as? String, "telegram")
                 XCTAssertNil(body["media"])
@@ -445,14 +451,122 @@ final class APIClientTests: XCTestCase {
         } catch { XCTAssertEqual(error.localizedDescription, "RE0 unavailable") }
         let telegram = try await api.searchResources(" Example ", source: .telegram, media: hint)
         XCTAssertEqual(telegram.warnings, ["Channel unavailable"])
-        XCTAssertEqual(requests.all.count, 2)
-        for source in [ResourceSource.all, .re0] {
-            do {
-                _ = try await api.searchResources("Example", source: source, media: ResourceMediaHint(SubscriptionDraft()))
-                XCTFail("An unsupported provider or missing RE0 identity must fail before HTTP.")
-            } catch { }
+        _ = try await api.searchResources("Example", source: .hdhaven, media: hint)
+        do {
+            _ = try await api.searchResources("Example", source: .all)
+            XCTFail("Providers must be searched independently.")
+        } catch { }
+        XCTAssertEqual(Set(ResourceSource.providers), [.re0, .hdhaven, .telegram])
+        XCTAssertEqual(requests.all.count, 3)
+    }
+
+    func testRE0AndHDHavenCanResolveNativeTitlesWithoutTMDBIdentity() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                let body = try requestJSON(request)
+                let hint = try XCTUnwrap(body["media"] as? [String: Any])
+                XCTAssertEqual(hint["tmdb_id"] as? Int, 0)
+                XCTAssertEqual(hint["kind"] as? String, "tv")
+                return (200, [:], Data(#"{"results":[]}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let hint = ResourceMediaHint(SubscriptionDraft(title: "Example", kind: .tv))
+        for source in [ResourceSource.re0, .hdhaven] {
+            _ = try await api.searchResources("Example", source: source, media: hint)
         }
         XCTAssertEqual(requests.all.count, 2)
+    }
+
+    func testEditedSearchQueryDoesNotReusePreviousMediaIdentity() async throws {
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                let body = try requestJSON(request)
+                XCTAssertEqual(body["query"] as? String, "Another")
+                XCTAssertNil(body["media"])
+                return (200, [:], Data(#"{"results":[]}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let hint = ResourceMediaHint(SubscriptionDraft(title: "Example", tmdbID: 42))
+        for source in [ResourceSource.re0, .hdhaven] {
+            _ = try await api.searchResources("Another", source: source, media: hint)
+        }
+    }
+
+    func testTitleOnlySearchReachesRE0AndHDHavenWithoutMediaHint() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                let body = try requestJSON(request)
+                XCTAssertNil(body["media"])
+                return (200, [:], Data(#"{"results":[]}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        for source in [ResourceSource.re0, .hdhaven] {
+            _ = try await api.searchResources("Example", source: source)
+        }
+        XCTAssertEqual(requests.all.count, 2)
+    }
+
+    func testHDHavenUnlockIncludesWorkIdentityAndKeepsResourceIDStable() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                XCTAssertEqual(request.url?.path, "/cinema/api/hdhaven/resources/unlock")
+                let body = try requestJSON(request)
+                XCTAssertEqual(body["slug"] as? String, "0123456789abcdef0123456789abcdef")
+                XCTAssertEqual(body["tmdb_id"] as? Int, 42)
+                XCTAssertEqual(body["kind"] as? String, "tv")
+                XCTAssertEqual(body["allow_paid"] as? Bool, true)
+                XCTAssertEqual(body["max_points"] as? Int, 4)
+                return (200, [:], Data(#"{"text":"https://115.com/s/example?password=abc1","type":"share"}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let result = try APIClient.decoder.decode(ResourceResult.self, from: Data("""
+        {"source":"hdhaven","slug":"0123456789abcdef0123456789abcdef","unlock_points":4,
+        "title":"Example","channel":"HDHaven","post_url":"https://hdhaven.test/resource/example",
+        "share_url":"","type":"share","tmdb_id":42,"kind":"tv"}
+        """.utf8))
+        XCTAssertEqual(result.resourceSource, .hdhaven)
+        XCTAssertTrue(result.needsUnlock)
+        let unlocked = try await api.unlockResource(result)
+        XCTAssertEqual(unlocked.id, result.id)
+        XCTAssertFalse(unlocked.needsUnlock)
+        XCTAssertEqual(requests.all.count, 1)
+    }
+
+    func testHDHavenSubscriptionUsesItsOwnAccountDefaults() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                if request.url!.path.hasSuffix("/hdhaven/config") {
+                    return (200, [:], Data(#"{"max_points":6}"#.utf8))
+                }
+                let body = try requestJSON(request)
+                XCTAssertEqual(body["source"] as? String, "hdhaven")
+                XCTAssertEqual(body["max_points"] as? Int, 6)
+                return (200, [:], try savedSubscription(body))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let saved = try await api.saveSubscription(SubscriptionDraft(title: "Example", tmdbID: 42, source: .hdhaven))
+        XCTAssertEqual(saved.resourceSource, .hdhaven)
+        XCTAssertEqual(requests.all.map { $0.url!.path }, [
+            "/cinema/api/hdhaven/config", "/cinema/api/resources/subscriptions"
+        ])
     }
 
     func testRE0UnlockOnlyObtainsLinkAndNeverSubmitsTransfer() async throws {
@@ -572,6 +686,75 @@ final class APIClientTests: XCTestCase {
         let image = try await api.poster(path: item.artwork, fallback: item)
         XCTAssertNil(image)
         XCTAssertEqual(requests.all.map { $0.url!.path }, ["/cinema/api/resources/catalog/resolve"])
+    }
+
+    func testMaoyanPosterAndResolvedPathSurviveNewClientAndCacheInstances() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let requests = RecordedRequests()
+        let imageData = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).pngData { _ in }
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                if request.url!.lastPathComponent == "resolve" {
+                    return (200, [:], Data("""
+                    {"matched":true,"media":{"id":42,"kind":"tv","title":"Example","poster":"/maoyan-fallback.jpg"}}
+                    """.utf8))
+                }
+                return (200, ["Content-Type": "image/png"], imageData)
+            }
+        }
+        let profile = ServerProfile(name: "Test", address: "http://example.test:8080/cinema")
+        let item = try APIClient.decoder.decode(MediaItem.self, from: Data("""
+        {"id":0,"kind":"tv","title":"Example","source":"maoyan","origin_id":"42","image_url":""}
+        """.utf8))
+        let first = try client(profile: profile, posterCache: PosterCache(directory: directory))
+        let image = try await first.poster(path: item.artwork, fallback: item)
+        XCTAssertNotNil(image)
+        XCTAssertNotNil(first.cachedPoster(path: nil, fallback: item))
+        first.invalidate()
+        XCTAssertEqual(requests.all.count, 2)
+        let second = try client(profile: profile, posterCache: PosterCache(directory: directory))
+        defer { second.invalidate() }
+        let restored = try await second.poster(path: item.artwork, fallback: item)
+        XCTAssertNotNil(restored)
+        XCTAssertEqual(requests.all.count, 2, "Disk hits must not re-resolve titles or download artwork.")
+    }
+
+    func testPosterDiskCacheIsolatesServersAndCredentialsAndRecoversCorruptFiles() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let requests = RecordedRequests()
+        let imageData = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).pngData { _ in }
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                return (200, ["Content-Type": "image/png"], imageData)
+            }
+        }
+        let profile = ServerProfile(name: "Test", address: "http://example.test:8080/cinema")
+        let first = try client(profile: profile, posterCache: PosterCache(directory: directory))
+        _ = try await first.poster("/poster.jpg")
+        first.invalidate()
+        let files = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+        XCTAssertEqual(files.count, 1)
+        try Data("corrupt image".utf8).write(to: XCTUnwrap(files.first))
+        let repaired = try client(profile: profile, posterCache: PosterCache(directory: directory))
+        _ = try await repaired.poster("/poster.jpg")
+        repaired.invalidate()
+        XCTAssertEqual(requests.all.count, 2)
+        let otherAccount = try client(
+            profile: profile, credential: ServerCredential(username: "other", password: "secret"),
+            posterCache: PosterCache(directory: directory)
+        )
+        _ = try await otherAccount.poster("/poster.jpg")
+        otherAccount.invalidate()
+        var otherServer = profile
+        otherServer.address = "http://other.test:8080/cinema"
+        let other = try client(profile: otherServer, posterCache: PosterCache(directory: directory))
+        defer { other.invalidate() }
+        _ = try await other.poster("/poster.jpg")
+        XCTAssertEqual(requests.all.count, 4)
     }
 
     private func resourceIdentity(kind: String = "", tmdbID: Int = 0) throws -> ResourceMediaIdentity {

@@ -106,7 +106,7 @@ final class ModelContractTests: XCTestCase {
     }
 
     func testSubscriptionEditsAndPausePreserveSourceAndUnlockLimit() async throws {
-        for source in ["all", "re0", "telegram"] {
+        for source in ["all", "re0", "hdhaven", "telegram"] {
             let sub = try APIClient.decoder.decode(ResourceSubscription.self, from: Data("""
             {"id":"sub1","title":"Example","kind":"tv","tmdb_id":42,"resource_type":"any",
             "source":"\(source)","auto_unlock":true,"max_points":8,
@@ -152,6 +152,21 @@ final class ModelContractTests: XCTestCase {
         XCTAssertNoThrow(try draft.validated())
     }
 
+    func testHDHavenSubscriptionAndUnlockRequireWorkIdentity() async throws {
+        var draft = SubscriptionDraft(title: "Example", source: .hdhaven)
+        XCTAssertThrowsError(try draft.validated())
+        draft.tmdbID = 42
+        XCTAssertNoThrow(try draft.validated())
+        for (id, kind) in [(0, "tv"), (42, ""), (42, "person")] {
+            let result = try APIClient.decoder.decode(ResourceResult.self, from: Data("""
+            {"source":"hdhaven","slug":"abc","unlock_points":0,"tmdb_id":\(id),"kind":"\(kind)",
+            "title":"Example","channel":"HDHaven","post_url":"https://hdhaven.test/resource/abc",
+            "share_url":"","type":"share"}
+            """.utf8))
+            XCTAssertThrowsError(try ResourceUnlockBody(result))
+        }
+    }
+
     func testLockedRE0ResourceIdentitySurvivesUnlockAndPreservesCost() async throws {
         var result = try re0Result(points: 3)
         XCTAssertEqual(result.resourceSource, .re0)
@@ -159,7 +174,7 @@ final class ModelContractTests: XCTestCase {
         XCTAssertEqual(result.link, result.postURL)
         XCTAssertEqual(result.unlockStatus, "3 积分")
         let id = result.id
-        let body = try RE0UnlockBody(result)
+        let body = try ResourceUnlockBody(result)
         XCTAssertEqual(body.maxPoints, 3)
         XCTAssertTrue(body.allowPaid)
         result.shareURL = "https://115.com/s/example?password=abc1"
@@ -167,17 +182,17 @@ final class ModelContractTests: XCTestCase {
         XCTAssertEqual(result.id, id)
         XCTAssertFalse(result.needsUnlock)
         XCTAssertEqual(result.link, result.shareURL)
-        XCTAssertThrowsError(try RE0UnlockBody(result))
+        XCTAssertThrowsError(try ResourceUnlockBody(result))
     }
 
     func testUnlockRejectsUnknownAndInvalidCostsButAllowsOwnedResources() async throws {
         for points in [nil, -1, 10001] as [Int?] {
-            XCTAssertThrowsError(try RE0UnlockBody(re0Result(points: points)))
+            XCTAssertThrowsError(try ResourceUnlockBody(re0Result(points: points)))
         }
-        let owned = try RE0UnlockBody(re0Result(points: nil, unlocked: true))
+        let owned = try ResourceUnlockBody(re0Result(points: nil, unlocked: true))
         XCTAssertFalse(owned.allowPaid)
         XCTAssertEqual(owned.maxPoints, 0)
-        let free = try RE0UnlockBody(re0Result(points: 0))
+        let free = try ResourceUnlockBody(re0Result(points: 0))
         XCTAssertFalse(free.allowPaid)
         XCTAssertEqual(free.maxPoints, 0)
     }

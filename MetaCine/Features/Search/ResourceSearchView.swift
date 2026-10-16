@@ -115,7 +115,7 @@ struct ResourceSearchView: View {
                 Button("开始转存 / 下载") { Task { await performTransfer(result) } }
                 Button("取消", role: .cancel) {}
             } message: { result in Text(result.title) }
-            .confirmationDialog("获取 RE0 资源链接？", isPresented: Binding(
+            .confirmationDialog("获取 \(unlock?.resourceSource.title ?? "") 资源链接？", isPresented: Binding(
                 get: { unlock != nil }, set: { if !$0 { unlock = nil } }
             ), titleVisibility: .visible, presenting: unlock) { result in
                 Button("确认获取链接") { Task { await performUnlock(result) } }
@@ -134,7 +134,7 @@ struct ResourceSearchView: View {
                 ContentUnavailableView {
                     Label("好资源，从这里找到", systemImage: "sparkle.magnifyingglass")
                 } description: {
-                    Text("同时搜索 RE0 和 Telegram，支持 115、磁力和电驴资源。")
+                    Text("同时搜索 RE0、HDHaven 和 Telegram，支持 115、磁力和电驴资源。")
                 }
             } else {
                 Text("“\(submittedQuery)” · \(results.count) 个资源\(loading ? " · 搜索中…" : "")")
@@ -193,8 +193,8 @@ struct ResourceSearchView: View {
                     if !result.specifications.isEmpty {
                         Text(result.specifications).font(.caption).foregroundStyle(.secondary).lineLimit(3)
                     }
-                    if result.resourceSource == .re0 {
-                        Text("RE0 · \(result.unlockStatus)").font(.caption).foregroundStyle(.secondary)
+                    if result.resourceSource.supportsUnlock {
+                        Text("\(result.resourceSource.title) · \(result.unlockStatus)").font(.caption).foregroundStyle(.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -218,7 +218,7 @@ struct ResourceSearchView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(result.rawText ?? result.title).textSelection(.enabled)
                     if let url = URL(string: result.postURL) {
-                        Link(result.resourceSource == .re0 ? "查看 RE0 资源" : "查看频道消息", destination: url)
+                        Link(result.resourceSource.supportsUnlock ? "查看 \(result.resourceSource.title) 资源" : "查看频道消息", destination: url)
                     }
                 }
                     .font(.caption).foregroundStyle(.secondary).padding(12)
@@ -242,10 +242,10 @@ struct ResourceSearchView: View {
             ShareLink(item: result.link) {
                 Image(systemName: "square.and.arrow.up").frame(minWidth: 28, minHeight: 32)
             }
-            .accessibilityLabel(result.needsUnlock ? "分享 RE0 资源页" : "分享资源链接")
+            .accessibilityLabel(result.needsUnlock ? "分享 \(result.resourceSource.title) 资源页" : "分享资源链接")
             Button {
                 UIPasteboard.general.string = result.link
-                notice = InlineNotice(title: "链接已复制", message: result.needsUnlock ? "已复制 RE0 资源页，获取链接后可复制下载地址。" : "已保留完整链接及提取码。")
+                notice = InlineNotice(title: "链接已复制", message: result.needsUnlock ? "已复制 \(result.resourceSource.title) 资源页，获取链接后可复制下载地址。" : "已保留完整链接及提取码。")
             } label: {
                 Image(systemName: "doc.on.doc").frame(minWidth: 28, minHeight: 32)
             }.accessibilityLabel("复制资源链接")
@@ -264,7 +264,7 @@ struct ResourceSearchView: View {
             Button {
                 if result.needsUnlock {
                     do {
-                        _ = try RE0UnlockBody(result)
+                        _ = try ResourceUnlockBody(result)
                         unlock = result
                     } catch {
                         notice = InlineNotice(title: "无法获取链接", message: error.localizedDescription)
@@ -279,7 +279,7 @@ struct ResourceSearchView: View {
                 }
             }
             .buttonStyle(.borderedProminent).disabled(transferring.contains(result.id) || unlocking.contains(result.id))
-            .accessibilityLabel(result.needsUnlock ? "获取 RE0 资源链接" : result.type == "share" ? "转存资源" : "离线下载资源")
+            .accessibilityLabel(result.needsUnlock ? "获取 \(result.resourceSource.title) 资源链接" : result.type == "share" ? "转存资源" : "离线下载资源")
         }.font(.caption).controlSize(.small)
     }
 
@@ -420,7 +420,7 @@ struct ResourceSearchView: View {
         transferring.insert(result.id)
         defer { transferring.remove(result.id) }
         do {
-            guard !result.shareURL.isEmpty else { throw APIError.validation("请先获取 RE0 资源链接。") }
+            guard !result.shareURL.isEmpty else { throw APIError.validation("请先获取 \(result.resourceSource.title) 资源链接。") }
             let hint = currentMedia ?? media[ResourceMediaIdentity(result)].map { ResourceMediaHint($0.subscription()) }
             let response: TransferResponse = try await store.requireClient().send(
                 "POST", "api/resources/transfer", body: TransferBody(text: result.shareURL, media: hint)

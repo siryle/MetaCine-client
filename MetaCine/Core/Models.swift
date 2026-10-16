@@ -217,10 +217,10 @@ struct ResourceResult: Decodable, Identifiable {
 
     var resourceSource: ResourceSource { ResourceSource(rawValue: source ?? "") ?? .telegram }
     var id: String {
-        if resourceSource == .re0, let slug { return "re0:\(slug)" }
+        if resourceSource.supportsUnlock, let slug { return "\(resourceSource.rawValue):\(slug)" }
         return "\(resourceSource.rawValue):\(channel):\(postURL):\(shareURL)"
     }
-    var needsUnlock: Bool { resourceSource == .re0 && shareURL.isEmpty }
+    var needsUnlock: Bool { resourceSource.supportsUnlock && shareURL.isEmpty }
     var link: String { shareURL.isEmpty ? postURL : shareURL }
     var unlockStatus: String {
         if unlocked == true { return "已解锁" }
@@ -338,11 +338,11 @@ struct SubscriptionDraft: Encodable, Identifiable {
         guard (30...10080).contains(intervalMinutes), value.quality.utf8.count <= 100 else {
             throw APIError.validation("检查间隔须为 30–10080 分钟，版本关键词最多 100 字节。")
         }
-        if source == .re0, tmdbID <= 0 {
-            throw APIError.validation("RE0 订阅需要准确的 TMDB ID，请从匹配的作品详情订阅或填写 ID。")
+        if source.supportsUnlock, tmdbID <= 0 {
+            throw APIError.validation("\(source.title) 订阅需要准确的 TMDB ID，请从匹配的作品详情订阅或填写 ID。")
         }
         if let maxPoints, !(0...10000).contains(maxPoints) {
-            throw APIError.validation("RE0 每个资源的积分上限须为 0–10000。")
+            throw APIError.validation("每个资源的积分上限须为 0–10000。")
         }
         return value
     }

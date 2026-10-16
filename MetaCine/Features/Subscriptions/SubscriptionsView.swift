@@ -113,8 +113,8 @@ struct SubscriptionsView: View {
                         StatusPill(title: sub.enabled ? "订阅中" : "已暂停", color: sub.enabled ? CineTheme.accent : .secondary)
                     }
                     Text(subscriptionInfo(sub)).font(.caption).foregroundStyle(.secondary)
-                    if sub.resourceSource.includesRE0 {
-                        Text(sub.autoUnlock == true ? "RE0 ≤ \(sub.maxPoints ?? 0) 积分 / 资源" : "RE0 免费 / 已解锁资源")
+                    if sub.resourceSource.usesUnlockPoints {
+                        Text(sub.autoUnlock == true ? "\(sub.resourceSource.unlockProvider.title) ≤ \(sub.maxPoints ?? 0) 积分 / 资源" : "\(sub.resourceSource.unlockProvider.title) 免费 / 已解锁资源")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     if let quality = sub.quality, !quality.isEmpty { Text(quality).font(.caption).foregroundStyle(.secondary) }

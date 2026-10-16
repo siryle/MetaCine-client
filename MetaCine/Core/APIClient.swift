@@ -62,6 +62,8 @@ final class APIClient {
     let baseURL: URL
     private let credential: ServerCredential
     private let session: URLSession
+    private let posterCache: PosterCache
+    private let posterCacheScope: String
     private let images = NSCache<NSString, UIImage>()
     private let posterPaths = NSCache<NSString, NSString>()
     private var imageRequests: [String: Task<UIImage, Error>] = [:]
@@ -81,10 +83,16 @@ final class APIClient {
         return encoder
     }
 
-    init(profile: ServerProfile, credential: ServerCredential, configuration: URLSessionConfiguration = .ephemeral) throws {
+    init(
+        profile: ServerProfile, credential: ServerCredential,
+        configuration: URLSessionConfiguration = .ephemeral, posterCache: PosterCache = .shared
+    ) throws {
         self.profile = profile
         self.credential = credential
         self.baseURL = try ServerProfile.normalizedURL(profile.address)
+        self.posterCache = posterCache
+        self.posterCacheScope = "\(profile.id):\(baseURL.absoluteString):\(profile.authMethod.rawValue):"
+            + PosterCache.fingerprint(try Self.encoder.encode(credential))
         configuration.timeoutIntervalForRequest = 100
         configuration.timeoutIntervalForResource = 120
         configuration.waitsForConnectivity = false
@@ -217,17 +225,19 @@ final class APIClient {
             return image
         }
         let task = Task {
-            let data = try await self.request(resource.endpoint, query: resource.query, artwork: true)
-            let image = try await Task.detached(priority: .utility) {
-                guard let source = CGImageSourceCreateWithData(data as CFData, nil),
-                      let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
-                        kCGImageSourceCreateThumbnailFromImageAlways: true,
-                        kCGImageSourceCreateThumbnailWithTransform: true,
-                        kCGImageSourceThumbnailMaxPixelSize: 600,
-                        kCGImageSourceShouldCacheImmediately: true
-                      ] as CFDictionary) else { throw APIError.invalidResponse }
-                return UIImage(cgImage: thumbnail)
-            }.value
+            let diskKey = self.posterCacheScope + ":image:" + key
+            let image: UIImage
+            if let data = await self.posterCache.data(for: diskKey),
+               let cached = try? await Self.decodePoster(data) {
+                image = cached
+            } else {
+                await self.posterCache.remove(diskKey)
+                let data = try await self.request(resource.endpoint, query: resource.query, artwork: true)
+                image = try await Self.decodePoster(data)
+                try Task.checkCancellation()
+                guard !self.invalidated else { throw CancellationError() }
+                await self.posterCache.store(data, for: diskKey)
+            }
             try Task.checkCancellation()
             guard !self.invalidated else { throw CancellationError() }
             self.images.setObject(
@@ -243,12 +253,59 @@ final class APIClient {
         return image
     }
 
+    private static func decodePoster(_ data: Data) async throws -> UIImage {
+        try await Task.detached(priority: .utility) {
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                  let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                    kCGImageSourceCreateThumbnailFromImageAlways: true,
+                    kCGImageSourceCreateThumbnailWithTransform: true,
+                    kCGImageSourceThumbnailMaxPixelSize: 600,
+                    kCGImageSourceShouldCacheImmediately: true
+                  ] as CFDictionary) else { throw APIError.invalidResponse }
+            return UIImage(cgImage: thumbnail)
+        }.value
+    }
+
+    func cachedPoster(path: String?, fallback item: MediaItem?) -> UIImage? {
+        guard !invalidated else { return nil }
+        let resolved = item.flatMap { posterPaths.object(forKey: $0.stableID as NSString) }.map { $0 as String }
+        let candidates = [resolved, path, item?.poster]
+        for case let path? in candidates {
+            if let resource = try? PosterResource(path),
+               let image = images.object(forKey: resource.cacheKey as NSString) { return image }
+        }
+        return nil
+    }
+
+    private func posterPathKey(_ item: MediaItem) -> String {
+        posterCacheScope + ":path:" + item.stableID + ":\(item.artwork ?? ""):\(item.poster ?? "")"
+    }
+
+    private func rememberPoster(_ path: String, for item: MediaItem) async {
+        posterPaths.setObject(path as NSString, forKey: item.stableID as NSString)
+        await posterCache.store(Data(path.utf8), for: posterPathKey(item))
+    }
+
+    private func forgetPoster(for item: MediaItem) async {
+        posterPaths.removeObject(forKey: item.stableID as NSString)
+        await posterCache.remove(posterPathKey(item))
+    }
+
     func poster(path: String?, fallback item: MediaItem?) async throws -> UIImage? {
+        guard !invalidated else { throw CancellationError() }
+        try Task.checkCancellation()
+        if let item, posterPaths.object(forKey: item.stableID as NSString) == nil,
+           let data = await posterCache.data(for: posterPathKey(item)),
+           let cached = String(data: data, encoding: .utf8) {
+            try Task.checkCancellation()
+            guard !invalidated else { throw CancellationError() }
+            posterPaths.setObject(cached as NSString, forKey: item.stableID as NSString)
+        }
         if let item, let cached = posterPaths.object(forKey: item.stableID as NSString) {
             do { return try await poster(cached as String) }
             catch {
                 if isCancellation(error) || (error as? APIError)?.isUnauthorized == true { throw error }
-                posterPaths.removeObject(forKey: item.stableID as NSString)
+                await forgetPoster(for: item)
             }
         }
         if let path, !path.isEmpty {
@@ -262,7 +319,7 @@ final class APIClient {
         if let alternate = item.poster, !alternate.isEmpty, alternate != path {
             do {
                 let image = try await poster(alternate)
-                posterPaths.setObject(alternate as NSString, forKey: item.stableID as NSString)
+                await rememberPoster(alternate, for: item)
                 return image
             }
             catch {
@@ -270,9 +327,14 @@ final class APIClient {
             }
         }
         guard let fallback = try await resolvedPoster(for: item), fallback != path else { return nil }
-        do { return try await poster(fallback) }
+        do {
+            let image = try await poster(fallback)
+            await rememberPoster(fallback, for: item)
+            return image
+        }
         catch {
-            posterPaths.removeObject(forKey: item.stableID as NSString)
+            if isCancellation(error) || (error as? APIError)?.isUnauthorized == true { throw error }
+            await forgetPoster(for: item)
             throw error
         }
     }

@@ -130,10 +130,14 @@ struct PosterView: View {
         .task(id: "\(store.client?.id.uuidString ?? ""):\(path ?? ""):\(fallback?.stableID ?? ""):\(attempt)") {
             let identity = UUID()
             requestID = identity
-            image = nil
             loading = false
             failed = false
-            guard let client = store.client, path?.isEmpty == false || fallback != nil else { return }
+            guard let client = store.client, path?.isEmpty == false || fallback != nil else {
+                image = nil
+                return
+            }
+            image = client.cachedPoster(path: path, fallback: fallback)
+            if image != nil { return }
             loading = true
             defer { if requestID == identity { loading = false } }
             do {

@@ -74,6 +74,16 @@
 			isa = PBXBuildFile;
 			fileRef = E1223516FD2914FCCA990C61;
 		};
+		A4ABD9F00AD8576CC2255A1C = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCine/Core/PosterCache.swift";
+			sourceTree = "<group>";
+		};
+		C5FDD6D1038AE09EDB599ECC = {
+			isa = PBXBuildFile;
+			fileRef = A4ABD9F00AD8576CC2255A1C;
+		};
 		479FA1D0F00C5F9A69FC37B4 = {
 			isa = PBXFileReference;
 			lastKnownFileType = sourcecode.swift;
@@ -264,6 +274,16 @@
 			isa = PBXBuildFile;
 			fileRef = 7EA5EF9A8675960614F18BD4;
 		};
+		2DBE4FFFA02F2DAE58E073DB = {
+			isa = PBXFileReference;
+			lastKnownFileType = sourcecode.swift;
+			path = "MetaCineTests/PosterCacheTests.swift";
+			sourceTree = "<group>";
+		};
+		C2772609C7983454F6E8038D = {
+			isa = PBXBuildFile;
+			fileRef = 2DBE4FFFA02F2DAE58E073DB;
+		};
 		8BF729FFE074CAEE622C0292 = {
 			isa = PBXFileReference;
 			lastKnownFileType = folder.assetcatalog;
@@ -313,6 +333,7 @@
 				9DD19B7D390E87C2B9D53567,
 				C1B24411715AA32E4C084A86,
 				E1223516FD2914FCCA990C61,
+				A4ABD9F00AD8576CC2255A1C,
 				479FA1D0F00C5F9A69FC37B4,
 				1CD35B2F9BD623038387F6F9,
 				7D971E242FBBDCD8C98DD99C,
@@ -341,6 +362,7 @@
 				9EED99DAE7937A80E08B4AB9,
 				5413E3171936D2C79E900A1A,
 				7EA5EF9A8675960614F18BD4,
+				2DBE4FFFA02F2DAE58E073DB,
 			);
 			name = "MetaCineTests";
 			sourceTree = "<group>";
@@ -365,6 +387,7 @@
 				3E87717D65530A01390F254B,
 				5C33F5E3C41E239CC2472BAD,
 				195AE30D746B9A43C36976FF,
+				C5FDD6D1038AE09EDB599ECC,
 				F9C2FB29AF3DC6A9D2CA7884,
 				82BE7D8205C475815D55C8A9,
 				8FE3176572410E61DE906720,
@@ -405,6 +428,7 @@
 				D2AFA97BEDBA1EBCEE67F6F9,
 				597C143E06B920BFA0B903E5,
 				1FB89E2483C60269E1EB56CB,
+				C2772609C7983454F6E8038D,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

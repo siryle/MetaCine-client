@@ -29,10 +29,14 @@ struct SubscriptionEditor: View {
                 Section {
                     Picker("资源来源", selection: $draft.source) {
                         ForEach(ResourceSource.allCases) { Text($0.title).tag($0) }
-                    }.disabled(loadingDefaults)
-                    if draft.source.includesRE0 {
-                        Toggle("允许 RE0 自动付费解锁", isOn: $draft.autoUnlock)
-                        if loadingDefaults { ProgressView("正在读取 RE0 账号积分上限…") }
+                    }
+                    .disabled(loadingDefaults)
+                    .onChange(of: draft.source) { _, _ in
+                        if draft.id == nil { draft.maxPoints = nil }
+                    }
+                    if draft.source.usesUnlockPoints {
+                        Toggle("允许 \(draft.source.unlockProvider.title) 自动付费解锁", isOn: $draft.autoUnlock)
+                        if loadingDefaults { ProgressView("正在读取 \(draft.source.unlockProvider.title) 账号积分上限…") }
                         if let defaultsError {
                             ErrorBanner(message: defaultsError) { Task { await loadDefaults() } }
                         }
@@ -42,11 +46,11 @@ struct SubscriptionEditor: View {
                                 set: { draft.maxPoints = $0 }
                             ))
                         }
-                        Button("恢复 RE0 账号默认上限") { Task { await loadDefaults() } }
+                        Button("恢复 \(draft.source.unlockProvider.title) 账号默认上限") { Task { await loadDefaults() } }
                             .disabled(loadingDefaults || saving)
                     }
                 } header: { Text("搜索来源") } footer: {
-                    Text("新订阅读取 RE0 账号设置的积分上限，允许在每个资源的上限内自动解锁。全部来源同时检查 RE0 和 Telegram；RE0 专属订阅需要准确的 TMDB ID。上限为 0 或关闭自动付费解锁时，仅处理免费或已解锁资源。")
+                    Text("新订阅读取对应账号设置的积分上限。全部来源检查 RE0、HDHaven 和 Telegram；RE0 / HDHaven 专属订阅需要准确的 TMDB ID。上限为 0 或关闭自动付费解锁时，仅处理免费或已解锁资源。")
                 }
                 Section {
                     Picker("资源类型", selection: $draft.resourceType) {
@@ -74,14 +78,14 @@ struct SubscriptionEditor: View {
                 ToolbarItem(placement: .confirmationAction) {
                     Button { Task { await save() } } label: {
                         if saving { ProgressView() } else { Text("保存").bold() }
-                    }.disabled(saving || loadingDefaults || (draft.source.includesRE0 && draft.maxPoints == nil)
+                    }.disabled(saving || loadingDefaults || (draft.source.usesUnlockPoints && draft.maxPoints == nil)
                                || draft.title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
             }
             .interactiveDismissDisabled(saving)
             .disabled(saving)
             .task(id: draft.source) {
-                if draft.source.includesRE0, draft.maxPoints == nil { await loadDefaults() }
+                if draft.source.usesUnlockPoints, draft.maxPoints == nil { await loadDefaults() }
             }
         }
     }
@@ -92,9 +96,9 @@ struct SubscriptionEditor: View {
         defaultsError = nil
         defer { loadingDefaults = false }
         do {
-            draft.maxPoints = try await store.requireClient().defaultUnlockPoints()
+            draft.maxPoints = try await store.requireClient().defaultUnlockPoints(source: draft.source)
         } catch {
-            if !isCancellation(error) { defaultsError = "读取 RE0 账号积分上限失败：\(error.localizedDescription)" }
+            if !isCancellation(error) { defaultsError = "读取 \(draft.source.unlockProvider.title) 账号积分上限失败：\(error.localizedDescription)" }
         }
     }
 
