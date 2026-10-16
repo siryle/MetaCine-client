@@ -88,12 +88,15 @@ final class APIClient {
         configuration: URLSessionConfiguration = .ephemeral, posterCache: PosterCache = .shared
     ) throws {
         let baseURL = try ServerProfile.normalizedURL(profile.address)
+        let credentialEncoder = Self.encoder
+        // Disk cache identities must stay stable across clients and app launches.
+        credentialEncoder.outputFormatting = .sortedKeys
         self.profile = profile
         self.credential = credential
         self.baseURL = baseURL
         self.posterCache = posterCache
         self.posterCacheScope = "\(profile.id):\(baseURL.absoluteString):\(profile.authMethod.rawValue):"
-            + PosterCache.fingerprint(try Self.encoder.encode(credential))
+            + PosterCache.fingerprint(try credentialEncoder.encode(credential))
         configuration.timeoutIntervalForRequest = 100
         configuration.timeoutIntervalForResource = 120
         configuration.waitsForConnectivity = false

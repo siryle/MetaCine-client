@@ -653,11 +653,17 @@ final class APIClientTests: XCTestCase {
         XCTAssertNotNil(first.cachedPoster(path: nil, fallback: item))
         first.invalidate()
         XCTAssertEqual(requests.all.count, 2)
-        let second = try client(profile: profile, posterCache: PosterCache(directory: directory))
-        defer { second.invalidate() }
-        let restored = try await second.poster(path: item.artwork, fallback: item)
-        XCTAssertNotNil(restored)
-        XCTAssertEqual(requests.all.count, 2, "Disk hits must not re-resolve titles or download artwork.")
+        for _ in 0..<12 {
+            let restoredClient = try client(
+                profile: profile, credential: ServerCredential(username: "admin", password: "secret"),
+                posterCache: PosterCache(directory: directory)
+            )
+            let restored = try await restoredClient.poster(path: item.artwork, fallback: item)
+            XCTAssertNotNil(restored)
+            XCTAssertNotNil(restoredClient.cachedPoster(path: nil, fallback: item))
+            restoredClient.invalidate()
+            XCTAssertEqual(requests.all.count, 2, "Disk hits must not re-resolve titles or download artwork.")
+        }
     }
 
     func testPosterDiskCacheIsolatesServersAndCredentialsAndRecoversCorruptFiles() async throws {
