@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import ImageIO
 
 enum APIError: LocalizedError {
     case validation(String)
@@ -29,8 +30,10 @@ enum APIError: LocalizedError {
 }
 
 struct EmptyBody: Encodable {}
-struct QueryBody: Encodable { let query: String }
-struct TransferBody: Encodable { let text: String }
+struct TransferBody: Encodable {
+    let text: String
+    var media: ResourceMediaHint?
+}
 struct DeleteJobsBody: Encodable { let ids: [String] }
 
 // Reject redirects instead of forwarding login bodies or cookies to another origin.
@@ -60,6 +63,9 @@ final class APIClient {
     private let credential: ServerCredential
     private let session: URLSession
     private let images = NSCache<NSString, UIImage>()
+    private let posterPaths = NSCache<NSString, NSString>()
+    private var imageRequests: [String: Task<UIImage, Error>] = [:]
+    private var posterResolutions: [String: Task<String?, Error>] = [:]
     private var authentication: Task<Void, Error>?
     private var invalidated = false
 
@@ -82,18 +88,26 @@ final class APIClient {
         configuration.timeoutIntervalForRequest = 100
         configuration.timeoutIntervalForResource = 120
         configuration.waitsForConnectivity = false
-        configuration.urlCache = nil
+        // Keep authenticated artwork cached in memory, isolated to this server connection.
+        configuration.urlCache = URLCache(memoryCapacity: 24 * 1024 * 1024, diskCapacity: 0, diskPath: nil)
         configuration.httpCookieAcceptPolicy = .always
         self.session = URLSession(configuration: configuration, delegate: RedirectPolicy(), delegateQueue: nil)
         images.totalCostLimit = 40 * 1024 * 1024
+        posterPaths.countLimit = 300
     }
 
     func invalidate() {
         invalidated = true
         authentication?.cancel()
         authentication = nil
+        imageRequests.values.forEach { $0.cancel() }
+        imageRequests.removeAll()
+        posterResolutions.values.forEach { $0.cancel() }
+        posterResolutions.removeAll()
+        session.configuration.urlCache?.removeAllCachedResponses()
         session.invalidateAndCancel()
         images.removeAllObjects()
+        posterPaths.removeAllObjects()
     }
 
     func url(path: String, query: [URLQueryItem] = []) throws -> URL {
@@ -132,14 +146,15 @@ final class APIClient {
 
     private func request(
         _ path: String, query: [URLQueryItem] = [], method: String = "GET", body: Data? = nil,
-        retryAuthentication: Bool = true
+        retryAuthentication: Bool = true, artwork: Bool = false
     ) async throws -> Data {
         guard !invalidated else { throw CancellationError() }
         try Task.checkCancellation()
         var request = URLRequest(url: try url(path: path, query: query))
         request.httpMethod = method
         request.httpBody = body
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        request.cachePolicy = artwork ? .useProtocolCachePolicy : .reloadIgnoringLocalCacheData
+        request.setValue(artwork ? "image/*" : "application/json", forHTTPHeaderField: "Accept")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
         let (data, response) = try await session.data(for: request)
         try Task.checkCancellation()
@@ -147,7 +162,9 @@ final class APIClient {
         guard let response = response as? HTTPURLResponse else { throw APIError.invalidResponse }
         if response.statusCode == 401, retryAuthentication {
             try await authenticate()
-            return try await self.request(path, query: query, method: method, body: body, retryAuthentication: false)
+            return try await self.request(
+                path, query: query, method: method, body: body, retryAuthentication: false, artwork: artwork
+            )
         }
         guard (200..<300).contains(response.statusCode) else {
             struct ErrorResponse: Decodable { let error: String }
@@ -189,21 +206,105 @@ final class APIClient {
     }
 
     func poster(_ path: String) async throws -> UIImage {
-        if let cached = images.object(forKey: path as NSString) { return cached }
-        let endpoint: String
-        let query: [URLQueryItem]
-        if path.hasPrefix("https://") {
-            let host = URL(string: path)?.host ?? ""
-            let douban = host.hasPrefix("img") && host.hasSuffix(".doubanio.com")
-            endpoint = douban ? "api/resources/rankings/image" : "api/resources/catalog/image"
-            query = [URLQueryItem(name: "url", value: path)]
-        } else {
-            endpoint = "api/tmdb/image"
-            query = [URLQueryItem(name: "path", value: path), URLQueryItem(name: "size", value: "w500")]
+        guard !invalidated else { throw CancellationError() }
+        try Task.checkCancellation()
+        let resource = try PosterResource(path)
+        let key = resource.cacheKey
+        if let cached = images.object(forKey: key as NSString) { return cached }
+        if let pending = imageRequests[key] {
+            let image = try await pending.value
+            try Task.checkCancellation()
+            return image
         }
-        let data = try await request(endpoint, query: query)
-        guard let image = UIImage(data: data) else { throw APIError.invalidResponse }
-        images.setObject(image, forKey: path as NSString, cost: Int(image.size.width * image.size.height * 4))
+        let task = Task {
+            let data = try await self.request(resource.endpoint, query: resource.query, artwork: true)
+            let image = try await Task.detached(priority: .utility) {
+                guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+                      let thumbnail = CGImageSourceCreateThumbnailAtIndex(source, 0, [
+                        kCGImageSourceCreateThumbnailFromImageAlways: true,
+                        kCGImageSourceCreateThumbnailWithTransform: true,
+                        kCGImageSourceThumbnailMaxPixelSize: 600,
+                        kCGImageSourceShouldCacheImmediately: true
+                      ] as CFDictionary) else { throw APIError.invalidResponse }
+                return UIImage(cgImage: thumbnail)
+            }.value
+            try Task.checkCancellation()
+            guard !self.invalidated else { throw CancellationError() }
+            self.images.setObject(
+                image, forKey: key as NSString,
+                cost: (image.cgImage?.bytesPerRow ?? 0) * (image.cgImage?.height ?? 0)
+            )
+            return image
+        }
+        imageRequests[key] = task
+        defer { imageRequests[key] = nil }
+        let image = try await task.value
+        try Task.checkCancellation()
         return image
+    }
+
+    func poster(path: String?, fallback item: MediaItem?) async throws -> UIImage? {
+        if let item, let cached = posterPaths.object(forKey: item.stableID as NSString) {
+            do { return try await poster(cached as String) }
+            catch {
+                if isCancellation(error) || (error as? APIError)?.isUnauthorized == true { throw error }
+                posterPaths.removeObject(forKey: item.stableID as NSString)
+            }
+        }
+        if let path, !path.isEmpty {
+            do { return try await poster(path) }
+            catch {
+                if isCancellation(error) || (error as? APIError)?.isUnauthorized == true { throw error }
+                guard item != nil else { throw error }
+            }
+        }
+        guard let item else { return nil }
+        if let alternate = item.poster, !alternate.isEmpty, alternate != path {
+            do {
+                let image = try await poster(alternate)
+                posterPaths.setObject(alternate as NSString, forKey: item.stableID as NSString)
+                return image
+            }
+            catch {
+                if isCancellation(error) || (error as? APIError)?.isUnauthorized == true { throw error }
+            }
+        }
+        guard let fallback = try await resolvedPoster(for: item), fallback != path else { return nil }
+        do { return try await poster(fallback) }
+        catch {
+            posterPaths.removeObject(forKey: item.stableID as NSString)
+            throw error
+        }
+    }
+
+    private func resolvedPoster(for item: MediaItem) async throws -> String? {
+        guard !invalidated else { throw CancellationError() }
+        let key = item.stableID
+        if let cached = posterPaths.object(forKey: key as NSString) { return cached as String }
+        if let pending = posterResolutions[key] {
+            let path = try await pending.value
+            try Task.checkCancellation()
+            return path
+        }
+        let task = Task<String?, Error> {
+            let path: String?
+            if item.tmdbID > 0 {
+                let detail: MediaDetail = try await self.get(
+                    "api/resources/rankings/tmdb/\(item.kind)/\(item.tmdbID)"
+                )
+                path = detail.poster
+            } else {
+                let resolution = try await self.resolveCatalog(item)
+                path = resolution.matched ? resolution.media?.artwork : nil
+            }
+            try Task.checkCancellation()
+            if let path, !path.isEmpty { self.posterPaths.setObject(path as NSString, forKey: key as NSString) }
+            return path
+        }
+        posterResolutions[key] = task
+        defer { posterResolutions[key] = nil }
+        let path = try await task.value
+        try Task.checkCancellation()
+        return path
     }
 }

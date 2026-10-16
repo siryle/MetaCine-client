@@ -192,10 +192,14 @@ struct SearchResponse: Decodable {
 }
 
 struct ResourceResult: Decodable, Identifiable {
+    let source: String?
+    let slug: String?
+    var unlocked: Bool?
+    let unlockPoints: Int?
     let title: String
     let channel: String
     let postURL: String
-    let shareURL: String
+    var shareURL: String
     let type: String
     let tmdbID: Int?
     let kind: String?
@@ -205,13 +209,24 @@ struct ResourceResult: Decodable, Identifiable {
     let details: [String: String]?
 
     enum CodingKeys: String, CodingKey {
-        case title, channel, type, kind, season, episode, rawText, details
+        case source, slug, unlocked, unlockPoints, title, channel, type, kind, season, episode, rawText, details
         case postURL = "postUrl"
         case shareURL = "shareUrl"
         case tmdbID = "tmdbId"
     }
 
-    var id: String { "\(channel):\(postURL):\(shareURL)" }
+    var resourceSource: ResourceSource { ResourceSource(rawValue: source ?? "") ?? .telegram }
+    var id: String {
+        if resourceSource == .re0, let slug { return "re0:\(slug)" }
+        return "\(resourceSource.rawValue):\(channel):\(postURL):\(shareURL)"
+    }
+    var needsUnlock: Bool { resourceSource == .re0 && shareURL.isEmpty }
+    var link: String { shareURL.isEmpty ? postURL : shareURL }
+    var unlockStatus: String {
+        if unlocked == true { return "已解锁" }
+        if let unlockPoints, unlockPoints >= 0 { return "\(unlockPoints) 积分" }
+        return "积分未知"
+    }
     var resourceKind: ResourceKind { ResourceKind(rawValue: type) ?? .any }
     var specifications: String {
         ["resolution", "size", "source", "created"]
@@ -219,7 +234,9 @@ struct ResourceResult: Decodable, Identifiable {
     }
     func subscription() -> SubscriptionDraft {
         var draft = SubscriptionDraft()
-        draft.title = title
+        let identity = ResourceMediaIdentity(self)
+        draft.title = identity.title
+        draft.year = identity.year
         draft.kind = MediaKind(rawValue: kind ?? "") ?? .movie
         draft.tmdbID = tmdbID ?? 0
         draft.season = draft.kind == .tv ? (season ?? 0) : 0
@@ -246,13 +263,19 @@ struct ResourceSubscription: Decodable, Identifiable {
     let lastJobID: String?
     let lastJobStatus: String?
     let message: String?
+    let source: String?
+    let autoUnlock: Bool?
+    let maxPoints: Int?
 
     enum CodingKeys: String, CodingKey {
         case id, title, originalTitle, kind, year, poster, season, resourceType, quality
-        case intervalMinutes, enabled, createdAt, lastChecked, lastJobStatus, message
+        case intervalMinutes, enabled, createdAt, lastChecked, lastJobStatus, message, source, autoUnlock, maxPoints
         case tmdbID = "tmdbId"
         case lastJobID = "lastJobId"
     }
+
+    // Subscriptions created before source selection searched Telegram only.
+    var resourceSource: ResourceSource { ResourceSource(rawValue: source ?? "") ?? .telegram }
 
     func matches(_ media: MediaItem) -> Bool {
         guard kind == media.kind else { return false }
@@ -275,7 +298,8 @@ struct ResourceSubscription: Decodable, Identifiable {
             id: id, title: title, originalTitle: originalTitle ?? "", tmdbID: tmdbID ?? 0,
             kind: MediaKind(rawValue: kind) ?? .movie, year: year ?? 0, poster: poster ?? "",
             season: season ?? 0, resourceType: ResourceKind(rawValue: resourceType) ?? .any,
-            quality: quality ?? "", intervalMinutes: intervalMinutes, enabled: enabled
+            quality: quality ?? "", intervalMinutes: intervalMinutes, enabled: enabled,
+            source: resourceSource, autoUnlock: autoUnlock ?? false, maxPoints: maxPoints ?? 0
         )
     }
 }
@@ -293,6 +317,9 @@ struct SubscriptionDraft: Encodable, Identifiable {
     var quality = ""
     var intervalMinutes = 60
     var enabled = true
+    var source: ResourceSource = .all
+    var autoUnlock = true
+    var maxPoints: Int?
 
     func validated() throws -> Self {
         var value = self
@@ -310,6 +337,12 @@ struct SubscriptionDraft: Encodable, Identifiable {
         }
         guard (30...10080).contains(intervalMinutes), value.quality.utf8.count <= 100 else {
             throw APIError.validation("检查间隔须为 30–10080 分钟，版本关键词最多 100 字节。")
+        }
+        if source == .re0, tmdbID <= 0 {
+            throw APIError.validation("RE0 订阅需要准确的 TMDB ID，请从匹配的作品详情订阅或填写 ID。")
+        }
+        if let maxPoints, !(0...10000).contains(maxPoints) {
+            throw APIError.validation("RE0 每个资源的积分上限须为 0–10000。")
         }
         return value
     }

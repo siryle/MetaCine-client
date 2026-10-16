@@ -10,15 +10,20 @@ struct MediaDetailView: View {
     @State private var error: String?
     @State private var draft: SubscriptionDraft?
     @State private var showingResources = false
+    @State private var subscriptions: [ResourceSubscription]?
+    @State private var subscriptionError: String?
+    @State private var subscribing = false
+    @State private var notice: InlineNotice?
 
     private var currentItem: MediaItem { resolved ?? item }
+    private var isSubscribed: Bool { subscriptions?.contains { $0.matches(currentItem) } == true }
 
     var body: some View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     HStack(alignment: .top, spacing: 18) {
-                        PosterView(path: detail?.poster ?? currentItem.artwork)
+                        PosterView(path: nonempty(detail?.poster) ?? currentItem.artwork, fallback: currentItem)
                             .frame(width: 116, height: 174).clipShape(RoundedRectangle(cornerRadius: 14))
                         VStack(alignment: .leading, spacing: 10) {
                             SectionEyebrow(text: item.sourceTitle)
@@ -34,6 +39,9 @@ struct MediaDetailView: View {
                     }
                     if loading { ProgressView("正在读取作品资料…") }
                     if let error { ErrorBanner(message: error) { Task { await load() } } }
+                    if let subscriptionError {
+                        ErrorBanner(message: subscriptionError) { Task { await loadSubscriptions() } }
+                    }
                     VStack(alignment: .leading, spacing: 10) {
                         Text("剧情简介").font(.headline)
                         Text(nonempty(detail?.overview) ?? nonempty(currentItem.overview) ?? "暂无剧情简介")
@@ -59,17 +67,56 @@ struct MediaDetailView: View {
                         showingResources = true
                     } label: {
                         Label("搜索资源", systemImage: "magnifyingglass").frame(maxWidth: .infinity)
-                    }.buttonStyle(.bordered)
-                    Button { draft = subscriptionDraft() } label: {
-                        Label("订阅作品", systemImage: "bookmark.fill").frame(maxWidth: .infinity)
-                    }.buttonStyle(.borderedProminent).disabled(loading)
+                    }.buttonStyle(.bordered).disabled(loading)
+                    Button { Task { await subscribe() } } label: {
+                        HStack {
+                            if subscribing { ProgressView().tint(.white) }
+                            Text(isSubscribed ? "已订阅" : subscribing ? "订阅中" : "一键订阅")
+                        }.frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(loading || subscribing || isSubscribed || subscriptions == nil)
                 }.padding().background(.regularMaterial)
             }
             .navigationTitle("作品详情").navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } } }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button("订阅设置") { draft = subscriptionDraft() }.disabled(loading || subscribing)
+                }
+                ToolbarItem(placement: .topBarTrailing) { Button("完成") { dismiss() } }
+            }
             .task { await load() }
+            .task(id: store.subscriptionsRevision) { await loadSubscriptions() }
             .sheet(item: $draft) { value in SubscriptionEditor(draft: value) }
-            .sheet(isPresented: $showingResources) { ResourceSearchView(initialQuery: currentItem.title) }
+            .sheet(isPresented: $showingResources) {
+                ResourceSearchView(initialQuery: currentItem.title, media: ResourceMediaHint(subscriptionDraft()))
+            }
+            .cineNotice($notice)
+        }
+    }
+
+    @MainActor private func loadSubscriptions() async {
+        do {
+            let values: [ResourceSubscription]? = try await store.requireClient().get("api/resources/subscriptions")
+            try Task.checkCancellation()
+            subscriptions = values ?? []
+            subscriptionError = nil
+        } catch {
+            if !isCancellation(error) { subscriptionError = "读取订阅状态失败：\(error.localizedDescription)" }
+        }
+    }
+
+    @MainActor private func subscribe() async {
+        guard !subscribing, !isSubscribed, subscriptions != nil else { return }
+        subscribing = true
+        defer { subscribing = false }
+        do {
+            let saved = try await store.requireClient().saveSubscription(subscriptionDraft())
+            subscriptions?.append(saved)
+            store.subscriptionsDidChange()
+            notice = InlineNotice(title: "订阅已创建", message: "已启用 RE0 和 Telegram，按 RE0 账号的默认积分上限自动解锁。")
+        } catch {
+            if !isCancellation(error) { notice = InlineNotice(title: "订阅失败", message: error.localizedDescription) }
         }
     }
 

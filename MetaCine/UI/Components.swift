@@ -97,10 +97,12 @@ struct StatusPill: View {
 struct PosterView: View {
     @Environment(AppStore.self) private var store
     let path: String?
+    var fallback: MediaItem?
     @State private var image: UIImage?
     @State private var loading = false
     @State private var failed = false
     @State private var attempt = 0
+    @State private var requestID = UUID()
 
     var body: some View {
         GeometryReader { geometry in
@@ -125,18 +127,23 @@ struct PosterView: View {
             }
         }
         .clipped()
-        .task(id: "\(store.client?.id.uuidString ?? ""):\(path ?? ""):\(attempt)") {
+        .task(id: "\(store.client?.id.uuidString ?? ""):\(path ?? ""):\(fallback?.stableID ?? ""):\(attempt)") {
+            let identity = UUID()
+            requestID = identity
             image = nil
+            loading = false
             failed = false
-            guard let path, !path.isEmpty, let client = store.client else { return }
+            guard let client = store.client, path?.isEmpty == false || fallback != nil else { return }
             loading = true
-            defer { loading = false }
+            defer { if requestID == identity { loading = false } }
             do {
-                let loaded = try await client.poster(path)
+                let loaded = try await client.poster(path: path, fallback: fallback)
                 try Task.checkCancellation()
+                guard requestID == identity else { return }
                 image = loaded
+                failed = loaded == nil
             } catch {
-                if !Task.isCancelled { failed = true }
+                if !isCancellation(error), requestID == identity { failed = true }
             }
         }
         .accessibilityLabel("作品海报")

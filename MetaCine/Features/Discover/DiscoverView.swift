@@ -12,7 +12,7 @@ struct DiscoverView: View {
         NavigationStack {
             ConnectionGate {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
+                    LazyVStack(alignment: .leading, spacing: 24) {
                         intro
                         controls
                         if let error { ErrorBanner(message: error) { Task { await load(refresh: true) } } }

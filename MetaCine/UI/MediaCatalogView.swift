@@ -24,7 +24,7 @@ struct MediaCatalogView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
+        LazyVStack(alignment: .leading, spacing: 24) {
             if let subscriptionsError {
                 ErrorBanner(message: subscriptionsError) { Task { await loadSubscriptions() } }
             }
@@ -85,7 +85,7 @@ struct MediaCatalogView: View {
     private func posterCard(_ item: MediaItem) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             Button { selection = item } label: {
-                PosterView(path: item.artwork).aspectRatio(2 / 3, contentMode: .fit)
+                PosterView(path: item.artwork, fallback: item).aspectRatio(2 / 3, contentMode: .fit)
             }
             .buttonStyle(.plain)
             .accessibilityLabel("查看\(item.title)详情")
@@ -196,9 +196,7 @@ struct MediaCatalogView: View {
                 draft.originalTitle = detail.originalTitle ?? draft.originalTitle
                 draft.poster = detail.poster ?? draft.poster
             }
-            let saved: ResourceSubscription = try await api.send(
-                "POST", "api/resources/subscriptions", body: draft.validated()
-            )
+            let saved = try await api.saveSubscription(draft)
             guard store.contextID == context else { return }
             // Discard any older list response so it cannot erase the subscription just saved.
             subscriptionsRequestID = UUID()

@@ -29,6 +29,29 @@ private final class RecordedRequests: @unchecked Sendable {
     var all: [URLRequest] { lock.withLock { values } }
 }
 
+private func requestJSON(_ request: URLRequest) throws -> [String: Any] {
+    var data = request.httpBody ?? Data()
+    if data.isEmpty, let stream = request.httpBodyStream {
+        stream.open()
+        defer { stream.close() }
+        var buffer = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = stream.read(&buffer, maxLength: buffer.count)
+            if count < 0 { throw stream.streamError ?? APIError.invalidResponse }
+            if count == 0 { break }
+            data.append(contentsOf: buffer.prefix(count))
+        }
+    }
+    return try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: Any])
+}
+
+private func savedSubscription(_ values: [String: Any]) throws -> Data {
+    var body = values
+    body["id"] = body["id"] ?? "sub1"
+    body["created_at"] = "2026-10-16T10:00:00Z"
+    return try JSONSerialization.data(withJSONObject: body)
+}
+
 @MainActor
 final class APIClientTests: XCTestCase {
     private func client() throws -> APIClient {
@@ -296,15 +319,259 @@ final class APIClientTests: XCTestCase {
         defer { api.invalidate() }
         for path in [
             "/tmdb.jpg", "https://img1.doubanio.com/view/photo/s_ratio_poster/public/p123.jpg",
-            "https://m.media-amazon.com/images/M/example.jpg", "https://lain.bgm.tv/pic/cover/l/example.jpg"
+            "https://m.media-amazon.com/images/M/example.jpg", "https://lain.bgm.tv/pic/cover/l/example.jpg",
+            "https://s4.anilist.co/file/anilistcdn/media/anime/cover/large/example.jpg",
+            "https://p0.meituan.net/movie/example.jpg", "https://vcover-hz-pic.puui.qpic.cn/vcover_hz_pic/example"
         ] {
             _ = try await api.poster(path)
         }
         XCTAssertEqual(requests.all.map { $0.url!.path }, [
             "/cinema/api/tmdb/image", "/cinema/api/resources/rankings/image",
+            "/cinema/api/resources/catalog/image", "/cinema/api/resources/catalog/image",
+            "/cinema/api/resources/catalog/image",
             "/cinema/api/resources/catalog/image", "/cinema/api/resources/catalog/image"
         ])
         XCTAssertTrue(requests.all.allSatisfy { $0.url?.host == "example.test" })
+        XCTAssertTrue(requests.all.allSatisfy { $0.value(forHTTPHeaderField: "Accept") == "image/*" })
+    }
+
+    func testOneClickSubscriptionLoadsAccountLimitBeforeSavingAllSources() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                if request.url!.path.hasSuffix("/unlock/config") {
+                    return (200, [:], Data(#"{"max_points":7}"#.utf8))
+                }
+                let body = try requestJSON(request)
+                XCTAssertEqual(request.httpMethod, "POST")
+                XCTAssertEqual(body["source"] as? String, "all")
+                XCTAssertEqual(body["auto_unlock"] as? Bool, true)
+                XCTAssertEqual(body["max_points"] as? Int, 7)
+                return (200, [:], try savedSubscription(body))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let saved = try await api.saveSubscription(SubscriptionDraft(title: "Example", tmdbID: 42))
+        XCTAssertEqual(saved.maxPoints, 7)
+        XCTAssertEqual(requests.all.map { $0.url!.path }, [
+            "/cinema/api/re0/unlock/config", "/cinema/api/resources/subscriptions"
+        ])
+    }
+
+    func testExplicitLimitsAndSubscriptionEditsDoNotReadAccountDefaults() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                XCTAssertTrue(request.url!.path.contains("/subscriptions"))
+                return (200, [:], try savedSubscription(requestJSON(request)))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let saved = try await api.saveSubscription(SubscriptionDraft(title: "Example", maxPoints: 0))
+        XCTAssertEqual(saved.maxPoints, 0)
+        var paused = saved.draft
+        paused.enabled = false
+        paused.maxPoints = 3
+        let edited = try await api.saveSubscription(paused)
+        XCTAssertEqual(edited.maxPoints, 3)
+        XCTAssertFalse(edited.enabled)
+        XCTAssertEqual(requests.all.map(\.httpMethod), ["POST", "PUT"])
+        XCTAssertEqual(requests.all.last?.url?.path, "/cinema/api/resources/subscriptions/sub1")
+    }
+
+    func testFailedOrInvalidAccountDefaultNeverCreatesSubscription() async throws {
+        for (status, response) in [(500, #"{"error":"RE0 settings unavailable"}"#), (200, #"{"max_points":10001}"#)] {
+            let requests = RecordedRequests()
+            StubURLProtocol.lock.withLock {
+                StubURLProtocol.handler = { request in
+                    requests.append(request)
+                    return (status, [:], Data(response.utf8))
+                }
+            }
+            let api = try client()
+            do {
+                _ = try await api.saveSubscription(SubscriptionDraft(title: "Example"))
+                XCTFail("A missing account limit must not silently allow spending or save a zero limit.")
+            } catch {
+                XCTAssertEqual(requests.all.map { $0.url!.path }, ["/cinema/api/re0/unlock/config"])
+            }
+            api.invalidate()
+        }
+    }
+
+    func testTelegramSubscriptionDoesNotRequireRE0Configuration() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                XCTAssertEqual(request.httpMethod, "POST")
+                return (200, [:], try savedSubscription(requestJSON(request)))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let saved = try await api.saveSubscription(SubscriptionDraft(title: "Example", source: .telegram))
+        XCTAssertEqual(saved.maxPoints, 0)
+        XCTAssertEqual(saved.resourceSource, .telegram)
+        XCTAssertEqual(requests.all.count, 1)
+    }
+
+    func testResourceSearchUsesIndependentProvidersAndRE0MediaHint() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                let body = try requestJSON(request)
+                XCTAssertEqual(body["query"] as? String, "Example")
+                if body["source"] as? String == "re0" {
+                    XCTAssertEqual((body["media"] as? [String: Any])?["tmdb_id"] as? Int, 42)
+                    return (503, [:], Data(#"{"error":"RE0 unavailable"}"#.utf8))
+                }
+                XCTAssertEqual(body["source"] as? String, "telegram")
+                XCTAssertNil(body["media"])
+                return (200, [:], Data(#"{"results":[],"warnings":["Channel unavailable"]}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let hint = ResourceMediaHint(SubscriptionDraft(title: "Example", tmdbID: 42))
+        do {
+            _ = try await api.searchResources(" Example ", source: .re0, media: hint)
+            XCTFail("RE0 failure must be reported independently.")
+        } catch { XCTAssertEqual(error.localizedDescription, "RE0 unavailable") }
+        let telegram = try await api.searchResources(" Example ", source: .telegram, media: hint)
+        XCTAssertEqual(telegram.warnings, ["Channel unavailable"])
+        XCTAssertEqual(requests.all.count, 2)
+        for source in [ResourceSource.all, .re0] {
+            do {
+                _ = try await api.searchResources("Example", source: source, media: ResourceMediaHint(SubscriptionDraft()))
+                XCTFail("An unsupported provider or missing RE0 identity must fail before HTTP.")
+            } catch { }
+        }
+        XCTAssertEqual(requests.all.count, 2)
+    }
+
+    func testRE0UnlockOnlyObtainsLinkAndNeverSubmitsTransfer() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                XCTAssertEqual(request.url?.path, "/cinema/api/re0/resources/unlock")
+                let body = try requestJSON(request)
+                XCTAssertEqual(body["slug"] as? String, "0123456789abcdef0123456789abcdef")
+                XCTAssertEqual(body["allow_paid"] as? Bool, true)
+                XCTAssertEqual(body["max_points"] as? Int, 4)
+                return (200, [:], Data(#"{"text":"https://115.com/s/example?password=abc1","type":"share"}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let result = try APIClient.decoder.decode(ResourceResult.self, from: Data("""
+        {"source":"re0","slug":"0123456789abcdef0123456789abcdef","unlock_points":4,
+        "title":"Example","channel":"RE0","post_url":"https://re0.me/resource/example","share_url":"","type":"share"}
+        """.utf8))
+        let unlocked = try await api.unlockResource(result)
+        XCTAssertEqual(unlocked.id, result.id)
+        XCTAssertEqual(unlocked.shareURL, "https://115.com/s/example?password=abc1")
+        XCTAssertTrue(unlocked.unlocked == true)
+        XCTAssertEqual(requests.all.count, 1)
+    }
+
+    func testPostersCoalesceConcurrentRequestsAndReuseNormalizedTMDBPaths() async throws {
+        let requests = RecordedRequests()
+        let imageData = UIGraphicsImageRenderer(size: CGSize(width: 800, height: 1200)).pngData { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 800, height: 1200))
+        }
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                XCTAssertEqual(request.cachePolicy, .useProtocolCachePolicy)
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "image/*")
+                return (200, ["Content-Type": "image/png"], imageData)
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            for index in 0..<8 {
+                group.addTask {
+                    let path = index.isMultiple(of: 2) ? "/poster.jpg" : "https://image.tmdb.org/t/p/original/poster.jpg"
+                    let image = try await api.poster(path)
+                    XCTAssertLessThanOrEqual(max(image.cgImage!.width, image.cgImage!.height), 600)
+                }
+            }
+            try await group.waitForAll()
+        }
+        _ = try await api.poster("/poster.jpg")
+        XCTAssertEqual(requests.all.count, 1)
+        let parts = try XCTUnwrap(URLComponents(url: requests.all[0].url!, resolvingAgainstBaseURL: false))
+        XCTAssertEqual(parts.path, "/cinema/api/tmdb/image")
+        XCTAssertEqual(parts.queryItems?.first(where: { $0.name == "size" })?.value, "w342")
+        api.invalidate()
+        do {
+            _ = try await api.poster("/poster.jpg")
+            XCTFail("An invalidated client must not return cached artwork.")
+        } catch { XCTAssertTrue(error is CancellationError) }
+    }
+
+    func testMissingAndBrokenRankingPostersUseBackendTMDBFallback() async throws {
+        for source in ["re0", "imdb"] {
+            let requests = RecordedRequests()
+            let imageData = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).pngData { _ in }
+            StubURLProtocol.lock.withLock {
+                StubURLProtocol.handler = { request in
+                    requests.append(request)
+                    switch request.url!.lastPathComponent {
+                    case "image":
+                        let broken = request.url!.query?.contains("broken.jpg") == true
+                        return broken ? (404, [:], Data()) : (200, ["Content-Type": "image/png"], imageData)
+                    case "resolve":
+                        return (200, [:], Data("""
+                        {"matched":true,"media":{"id":42,"source":"tmdb","kind":"movie","title":"Example","poster":"/fallback.jpg"}}
+                        """.utf8))
+                    default:
+                        return (200, [:], Data(#"{"title":"Example","poster":"/fallback.jpg"}"#.utf8))
+                    }
+                }
+            }
+            let api = try client()
+            let poster = source == "re0" ? "" : "/broken.jpg"
+            let item = try APIClient.decoder.decode(MediaItem.self, from: Data("""
+            {"id":42,"kind":"movie","title":"Example","source":"\(source)","poster":"\(poster)"}
+            """.utf8))
+            let image = try await api.poster(path: source == "re0" ? nil : item.artwork, fallback: item)
+            XCTAssertNotNil(image)
+            let count = requests.all.count
+            XCTAssertEqual(count, source == "re0" ? 2 : 3)
+            let cached = try await api.poster(path: item.artwork, fallback: item)
+            XCTAssertNotNil(cached)
+            XCTAssertEqual(requests.all.count, count)
+            XCTAssertTrue(requests.all.contains { $0.url!.path.hasSuffix(source == "re0" ? "/tmdb/movie/42" : "/catalog/resolve") })
+            api.invalidate()
+        }
+    }
+
+    func testAmbiguousNativeArtworkDoesNotUseUnrelatedPoster() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                return (200, [:], Data(#"{"matched":false}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let item = try APIClient.decoder.decode(MediaItem.self, from: Data("""
+        {"id":123,"kind":"tv","source":"bangumi","title":"Example","image_url":""}
+        """.utf8))
+        let image = try await api.poster(path: item.artwork, fallback: item)
+        XCTAssertNil(image)
+        XCTAssertEqual(requests.all.map { $0.url!.path }, ["/cinema/api/resources/catalog/resolve"])
     }
 
     private func resourceIdentity(kind: String = "", tmdbID: Int = 0) throws -> ResourceMediaIdentity {

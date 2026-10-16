@@ -113,6 +113,10 @@ struct SubscriptionsView: View {
                         StatusPill(title: sub.enabled ? "订阅中" : "已暂停", color: sub.enabled ? CineTheme.accent : .secondary)
                     }
                     Text(subscriptionInfo(sub)).font(.caption).foregroundStyle(.secondary)
+                    if sub.resourceSource.includesRE0 {
+                        Text(sub.autoUnlock == true ? "RE0 ≤ \(sub.maxPoints ?? 0) 积分 / 资源" : "RE0 免费 / 已解锁资源")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
                     if let quality = sub.quality, !quality.isEmpty { Text(quality).font(.caption).foregroundStyle(.secondary) }
                     Text("每 \(sub.intervalMinutes) 分钟检查").font(.caption2).foregroundStyle(.secondary)
                     if let message = sub.message, !message.isEmpty {
@@ -150,6 +154,7 @@ struct SubscriptionsView: View {
         if let year = sub.year, year > 0 { parts.append(String(year)) }
         if sub.kind == "tv" { parts.append((sub.season ?? 0) > 0 ? "第 \(sub.season!) 季" : "全部季") }
         parts.append(ResourceKind(rawValue: sub.resourceType)?.title ?? sub.resourceType)
+        parts.append(sub.resourceSource.title)
         return parts.joined(separator: " · ")
     }
 

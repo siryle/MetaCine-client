@@ -98,8 +98,114 @@ final class ModelContractTests: XCTestCase {
         XCTAssertEqual(json["tmdb_id"] as? Int, 42)
         XCTAssertEqual(json["resource_type"] as? String, "magnet")
         XCTAssertEqual(json["interval_minutes"] as? Int, 60)
+        XCTAssertEqual(json["source"] as? String, "all")
+        XCTAssertEqual(json["auto_unlock"] as? Bool, true)
+        XCTAssertNil(json["max_points"])
         XCTAssertNil(json["seen"])
         XCTAssertNil(json["last_job_id"])
+    }
+
+    func testSubscriptionEditsAndPausePreserveSourceAndUnlockLimit() async throws {
+        for source in ["all", "re0", "telegram"] {
+            let sub = try APIClient.decoder.decode(ResourceSubscription.self, from: Data("""
+            {"id":"sub1","title":"Example","kind":"tv","tmdb_id":42,"resource_type":"any",
+            "source":"\(source)","auto_unlock":true,"max_points":8,
+            "interval_minutes":60,"enabled":true,"created_at":"2026-10-16T10:00:00Z"}
+            """.utf8))
+            var draft = sub.draft
+            draft.enabled.toggle()
+            let body = try XCTUnwrap(JSONSerialization.jsonObject(
+                with: APIClient.encoder.encode(draft.validated())
+            ) as? [String: Any])
+            XCTAssertEqual(body["source"] as? String, source)
+            XCTAssertEqual(body["auto_unlock"] as? Bool, true)
+            XCTAssertEqual(body["max_points"] as? Int, 8)
+            XCTAssertEqual(body["enabled"] as? Bool, false)
+        }
+    }
+
+    func testLegacySubscriptionsKeepTelegramAndFreeOnlyBehavior() async throws {
+        let sub = try APIClient.decoder.decode(ResourceSubscription.self, from: Data("""
+        {"id":"sub1","title":"Example","kind":"movie","resource_type":"any",
+        "interval_minutes":60,"enabled":true,"created_at":"2026-10-16T10:00:00Z"}
+        """.utf8))
+        XCTAssertEqual(sub.resourceSource, .telegram)
+        XCTAssertEqual(sub.draft.source, .telegram)
+        XCTAssertFalse(sub.draft.autoUnlock)
+        XCTAssertEqual(sub.draft.maxPoints, 0)
+    }
+
+    func testRE0SubscriptionRequiresTMDBIdentityAndValidPointLimit() async throws {
+        var draft = SubscriptionDraft(title: "Example", source: .re0)
+        XCTAssertThrowsError(try draft.validated())
+        draft.tmdbID = 42
+        for points in [-1, 10001] {
+            draft.maxPoints = points
+            XCTAssertThrowsError(try draft.validated())
+        }
+        for points in [0, 3, 10000] {
+            draft.maxPoints = points
+            XCTAssertEqual(try draft.validated().maxPoints, points)
+        }
+        draft.source = .all
+        draft.tmdbID = 0
+        XCTAssertNoThrow(try draft.validated())
+    }
+
+    func testLockedRE0ResourceIdentitySurvivesUnlockAndPreservesCost() async throws {
+        var result = try re0Result(points: 3)
+        XCTAssertEqual(result.resourceSource, .re0)
+        XCTAssertTrue(result.needsUnlock)
+        XCTAssertEqual(result.link, result.postURL)
+        XCTAssertEqual(result.unlockStatus, "3 积分")
+        let id = result.id
+        let body = try RE0UnlockBody(result)
+        XCTAssertEqual(body.maxPoints, 3)
+        XCTAssertTrue(body.allowPaid)
+        result.shareURL = "https://115.com/s/example?password=abc1"
+        result.unlocked = true
+        XCTAssertEqual(result.id, id)
+        XCTAssertFalse(result.needsUnlock)
+        XCTAssertEqual(result.link, result.shareURL)
+        XCTAssertThrowsError(try RE0UnlockBody(result))
+    }
+
+    func testUnlockRejectsUnknownAndInvalidCostsButAllowsOwnedResources() async throws {
+        for points in [nil, -1, 10001] as [Int?] {
+            XCTAssertThrowsError(try RE0UnlockBody(re0Result(points: points)))
+        }
+        let owned = try RE0UnlockBody(re0Result(points: nil, unlocked: true))
+        XCTAssertFalse(owned.allowPaid)
+        XCTAssertEqual(owned.maxPoints, 0)
+        let free = try RE0UnlockBody(re0Result(points: 0))
+        XCTAssertFalse(free.allowPaid)
+        XCTAssertEqual(free.maxPoints, 0)
+    }
+
+    func testResourceMediaHintRejectsWrongTMDBKindYearAndSeason() async throws {
+        let hint = ResourceMediaHint(SubscriptionDraft(
+            title: "Example", originalTitle: "Original", tmdbID: 42, kind: .tv, year: 2026, season: 2
+        ))
+        XCTAssertTrue(hint.matchesQuery(" ORIGINAL! "))
+        XCTAssertFalse(hint.matchesQuery("Another"))
+        XCTAssertTrue(hint.matches(try re0Result(points: 3)))
+        XCTAssertFalse(hint.matches(try re0Result(points: 3, tmdbID: 43)))
+        XCTAssertFalse(hint.matches(try re0Result(points: 3, kind: "movie")))
+        XCTAssertFalse(hint.matches(try re0Result(points: 3, season: 1)))
+        let movie = ResourceMediaHint(SubscriptionDraft(title: "Example", tmdbID: 42, year: 2025))
+        XCTAssertFalse(movie.matches(try re0Result(points: 3, kind: "movie", season: 0)))
+    }
+
+    private func re0Result(
+        points: Int?, unlocked: Bool = false, tmdbID: Int = 42, kind: String = "tv", season: Int = 2
+    ) throws -> ResourceResult {
+        var object: [String: Any] = [
+            "source": "re0", "slug": "0123456789abcdef0123456789abcdef", "unlocked": unlocked,
+            "title": "Example (2026)", "channel": "RE0", "type": "share", "share_url": "",
+            "post_url": "https://re0.me/resource/example", "tmdb_id": tmdbID, "kind": kind, "season": season
+        ]
+        if let points { object["unlock_points"] = points }
+        return try APIClient.decoder.decode(ResourceResult.self, from: JSONSerialization.data(withJSONObject: object))
     }
 
     func testSubscribedBadgeMatchesTMDBIdentityOrNormalizedTitleAndYear() async throws {
