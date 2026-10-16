@@ -2,6 +2,8 @@ import SwiftUI
 
 struct ResourceSearchView: View {
     @Environment(AppStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
+    let initialQuery: String
     @FocusState private var searchFocused: Bool
     @State private var searchFieldBounds = CGRect.zero
     @State private var query = ""
@@ -20,6 +22,11 @@ struct ResourceSearchView: View {
     @State private var notice: InlineNotice?
     @State private var openedJob: Job?
     @State private var media: [ResourceMediaIdentity: MediaItem] = [:]
+    @State private var initialized = false
+
+    init(initialQuery: String = "") {
+        self.initialQuery = initialQuery
+    }
 
     private var channels: [String] { Array(Set(results.map(\.channel))).sorted() }
 
@@ -67,13 +74,18 @@ struct ResourceSearchView: View {
                 .scrollDismissesKeyboard(.interactively)
                 .refreshable { if searched { await search() } }
                 .task(id: searchID) { if !submittedQuery.isEmpty { await search() } }
-                .onAppear { consumeQuery() }
-                .onChange(of: store.searchQuery) { _, _ in consumeQuery() }
+                .onAppear {
+                    guard !initialized else { return }
+                    initialized = true
+                    query = initialQuery
+                    if !query.isEmpty { submit() }
+                }
                 .onDisappear { searchFocused = false }
             }
             .background(CineBackdrop())
             .navigationTitle("资源搜索")
             .toolbar {
+                ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() } }
                 ToolbarItem(placement: .topBarTrailing) { ServerIndicator() }
                 ToolbarItemGroup(placement: .keyboard) {
                     Spacer()
@@ -229,13 +241,6 @@ struct ResourceSearchView: View {
             .buttonStyle(.borderedProminent).disabled(transferring.contains(result.id))
             .accessibilityLabel(result.type == "share" ? "转存资源" : "离线下载资源")
         }.font(.caption).controlSize(.small)
-    }
-
-    private func consumeQuery() {
-        guard !store.searchQuery.isEmpty else { return }
-        query = store.searchQuery
-        store.searchQuery = ""
-        submit()
     }
 
     private func submit() {

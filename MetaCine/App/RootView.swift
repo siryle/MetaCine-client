@@ -9,7 +9,7 @@ struct RootView: View {
             DiscoverView()
                 .tabItem { Label("发现", systemImage: "square.grid.2x2") }
                 .tag(AppStore.Tab.discover)
-            ResourceSearchView()
+            MediaSearchView()
                 .tabItem { Label("搜索", systemImage: "magnifyingglass") }
                 .tag(AppStore.Tab.search)
             SubscriptionsView()

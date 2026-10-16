@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 @testable import MetaCine
 
 private final class StubURLProtocol: URLProtocol {
@@ -197,6 +198,81 @@ final class APIClientTests: XCTestCase {
             XCTFail("Cancelled poster lookups must stop instead of trying more candidates.")
         } catch { XCTAssertTrue(error is CancellationError) }
         XCTAssertEqual(requests.all.count, 2)
+    }
+
+    func testExploreUsesCatalogEndpointAndDecodesPagination() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                return (200, [:], Data("""
+                {"items":[{"id":42,"kind":"tv","title":"Example Show","source":"tmdb"}],
+                "page":2,"total_pages":4,"has_more":true,"source":"tmdb","stale":false}
+                """.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        var filter = MediaExploreFilter()
+        filter.kind = .tv
+        filter.query = "A&B + 测试"
+        let page: RankingPage = try await api.get("api/resources/explore", query: filter.query(page: 2))
+        let url = try XCTUnwrap(requests.all.first?.url)
+        let parts = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
+        XCTAssertEqual(parts.path, "/cinema/api/resources/explore")
+        XCTAssertEqual(parts.queryItems?.first { $0.name == "q" }?.value, "A&B + 测试")
+        XCTAssertEqual(page.page, 2)
+        XCTAssertTrue(page.hasMore)
+        XCTAssertEqual(page.items?.first?.tmdbID, 42)
+    }
+
+    func testNativeCatalogResolutionUsesServerMatchingEndpoint() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                return (200, [:], Data("""
+                {"matched":true,"media":{"id":42,"kind":"tv","title":"Example Show","year":2026}}
+                """.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let item = try APIClient.decoder.decode(MediaItem.self, from: Data("""
+        {"id":0,"origin_id":"native-42","source":"bangumi","kind":"tv","title":"Example Show","year":2026}
+        """.utf8))
+        let result = try await api.resolveCatalog(item)
+        XCTAssertTrue(result.matched)
+        XCTAssertEqual(result.media?.tmdbID, 42)
+        XCTAssertEqual(requests.all.first?.httpMethod, "POST")
+        XCTAssertEqual(requests.all.first?.url?.path, "/cinema/api/resources/catalog/resolve")
+    }
+
+    func testPostersUseAuthenticatedBackendProxyForEachCatalog() async throws {
+        let requests = RecordedRequests()
+        let imageData = UIGraphicsImageRenderer(size: CGSize(width: 1, height: 1)).pngData { context in
+            UIColor.white.setFill()
+            context.fill(CGRect(x: 0, y: 0, width: 1, height: 1))
+        }
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                return (200, ["Content-Type": "image/png"], imageData)
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        for path in [
+            "/tmdb.jpg", "https://img1.doubanio.com/view/photo/s_ratio_poster/public/p123.jpg",
+            "https://m.media-amazon.com/images/M/example.jpg", "https://lain.bgm.tv/pic/cover/l/example.jpg"
+        ] {
+            _ = try await api.poster(path)
+        }
+        XCTAssertEqual(requests.all.map { $0.url!.path }, [
+            "/cinema/api/tmdb/image", "/cinema/api/resources/rankings/image",
+            "/cinema/api/resources/catalog/image", "/cinema/api/resources/catalog/image"
+        ])
+        XCTAssertTrue(requests.all.allSatisfy { $0.url?.host == "example.test" })
     }
 
     private func resourceIdentity(kind: String = "", tmdbID: Int = 0) throws -> ResourceMediaIdentity {

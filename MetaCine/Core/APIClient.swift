@@ -193,7 +193,9 @@ final class APIClient {
         let endpoint: String
         let query: [URLQueryItem]
         if path.hasPrefix("https://") {
-            endpoint = "api/resources/rankings/image"
+            let host = URL(string: path)?.host ?? ""
+            let douban = host.hasPrefix("img") && host.hasSuffix(".doubanio.com")
+            endpoint = douban ? "api/resources/rankings/image" : "api/resources/catalog/image"
             query = [URLQueryItem(name: "url", value: path)]
         } else {
             endpoint = "api/tmdb/image"

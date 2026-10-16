@@ -78,6 +78,7 @@ struct RankingPage: Decodable {
     let totalPages: Int
     let hasMore: Bool
     let source: String
+    let stale: Bool?
 }
 
 struct MediaActor: Decodable {
@@ -99,15 +100,31 @@ struct MediaItem: Decodable, Identifiable {
     let cast: [MediaActor]?
     let source: String?
     let doubanID: String?
+    let originID: String?
+    let imageURL: String?
+    let heat: String?
 
     enum CodingKeys: String, CodingKey {
         case id, kind, title, originalTitle, year, overview, poster, rating, genres, directors, cast, source
         case doubanID = "doubanId"
+        case originID = "originId"
+        case imageURL = "imageUrl"
+        case heat
     }
 
-    // Douban's numeric ID is never a TMDB identity.
-    var tmdbID: Int { source?.hasPrefix("douban") == true ? 0 : id }
-    var stableID: String { "\(source ?? "tmdb"):\(kind):\(doubanID ?? String(id))" }
+    // Native catalog IDs must never be used as TMDB identities.
+    var tmdbID: Int { source == nil || source == "tmdb" || source == "re0" ? id : 0 }
+    var stableID: String {
+        let identity = nonempty(doubanID) ?? nonempty(originID) ?? (id > 0 ? String(id) : "\(title):\(year ?? 0)")
+        return "\(source ?? "tmdb"):\(kind):\(identity)"
+    }
+    var artwork: String? { nonempty(imageURL) ?? nonempty(poster) }
+    var sourceTitle: String {
+        [
+            "tmdb": "TMDB", "re0": "流媒体榜单", "douban": "豆瓣", "maoyan": "猫眼",
+            "tencent": "腾讯视频", "imdb": "IMDb", "anilist": "AniList", "bangumi": "Bangumi"
+        ][source ?? "tmdb"] ?? source ?? "TMDB"
+    }
     var mediaKind: MediaKind { MediaKind(rawValue: kind) ?? .movie }
     var subtitle: String {
         [year.flatMap { $0 > 0 ? String($0) : nil }, mediaKind.title]
@@ -123,6 +140,10 @@ struct MediaItem: Decodable, Identifiable {
         draft.year = year ?? 0
         draft.poster = poster ?? ""
         return draft
+    }
+
+    private func nonempty(_ value: String?) -> String? {
+        value.flatMap { $0.isEmpty ? nil : $0 }
     }
 }
 
@@ -236,10 +257,13 @@ struct ResourceSubscription: Decodable, Identifiable {
     func matches(_ media: MediaItem) -> Bool {
         guard kind == media.kind else { return false }
         // A subscription to any season, including paused ones, marks the work as subscribed.
-        if media.tmdbID > 0, tmdbID == media.tmdbID { return true }
-        // Some Douban rankings omit the year, so only compare it when it is known.
-        return ((media.year ?? 0) == 0 || (year ?? 0) == (media.year ?? 0))
-            && Self.normalizedTitle(title) == Self.normalizedTitle(media.title)
+        if media.tmdbID > 0, let tmdbID, tmdbID > 0 { return tmdbID == media.tmdbID }
+        // Native rankings may use the original title and omit the release year.
+        guard (media.year ?? 0) == 0 || (year ?? 0) == (media.year ?? 0) else { return false }
+        let names = Set([title, originalTitle ?? ""].map(Self.normalizedTitle).filter { !$0.isEmpty })
+        return [media.title, media.originalTitle ?? ""].contains {
+            names.contains(Self.normalizedTitle($0))
+        }
     }
 
     private static func normalizedTitle(_ value: String) -> String {
