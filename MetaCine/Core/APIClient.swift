@@ -87,9 +87,10 @@ final class APIClient {
         profile: ServerProfile, credential: ServerCredential,
         configuration: URLSessionConfiguration = .ephemeral, posterCache: PosterCache = .shared
     ) throws {
+        let baseURL = try ServerProfile.normalizedURL(profile.address)
         self.profile = profile
         self.credential = credential
-        self.baseURL = try ServerProfile.normalizedURL(profile.address)
+        self.baseURL = baseURL
         self.posterCache = posterCache
         self.posterCacheScope = "\(profile.id):\(baseURL.absoluteString):\(profile.authMethod.rawValue):"
             + PosterCache.fingerprint(try Self.encoder.encode(credential))
