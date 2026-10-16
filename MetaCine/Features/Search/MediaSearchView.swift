@@ -5,13 +5,13 @@ struct MediaSearchView: View {
     @FocusState private var searchFocused: Bool
     @State private var searchFieldBounds = CGRect.zero
     @State private var query = ""
-    @State private var filter = MediaExploreFilter()
+    @State private var submittedQuery = ""
     @State private var searchID = UUID()
     @State private var requestID = UUID()
     @State private var refreshID = UUID()
     @State private var items: [MediaItem] = []
     @State private var page = 0
-    @State private var hasMore = false
+    @State private var remainingKinds: Set<MediaKind> = []
     @State private var stale = false
     @State private var loading = false
     @State private var error: String?
@@ -21,34 +21,34 @@ struct MediaSearchView: View {
             ConnectionGate {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 20) {
-                        VStack(alignment: .leading, spacing: 10) {
-                            SectionEyebrow(text: "SEARCH / TMDB")
-                            Text("探索你的下一部。").font(.system(.largeTitle, design: .serif).weight(.semibold))
-                            Text("按偏好探索 TMDB 片库，或输入片名查找电影和电视剧。")
-                                .font(.subheadline).foregroundStyle(.secondary)
-                        }
                         searchField
-                        controls
                         if let error {
                             ErrorBanner(message: error) { Task { await load(reset: page == 0) } }
                         }
                         if loading, items.isEmpty {
                             ProgressView("正在搜索 TMDB 片库…")
                                 .frame(maxWidth: .infinity).padding(.vertical, 60)
+                        } else if submittedQuery.isEmpty {
+                            ContentUnavailableView(
+                                "搜索电影和电视剧", systemImage: "magnifyingglass",
+                                description: Text("输入片名，搜索 TMDB 片库。")
+                            )
                         } else if items.isEmpty, error == nil {
                             ContentUnavailableView(
                                 "暂无匹配作品", systemImage: "film",
-                                description: Text("试试其他片名、作品类型或年份，也可重置筛选。")
+                                description: Text("试试其他片名或关键词。")
                             )
                         } else if !items.isEmpty {
-                            Text(filter.searching ? "“\(filter.query)” · 已加载 \(items.count) 部作品" : "TMDB 片库 · 已加载 \(items.count) 部作品")
+                            Text("“\(submittedQuery)” · 已加载 \(items.count) 部作品")
                                 .font(.subheadline).foregroundStyle(.secondary)
                         }
-                        MediaCatalogView(
-                            sections: [MediaCatalogSection(id: "tmdb", items: items, stale: stale)],
-                            tab: .search, refreshID: refreshID
-                        )
-                        if hasMore {
+                        if !items.isEmpty {
+                            MediaCatalogView(
+                                sections: [MediaCatalogSection(id: "tmdb", items: items, stale: stale)],
+                                tab: .search, refreshID: refreshID
+                            )
+                        }
+                        if !remainingKinds.isEmpty {
                             Button { Task { await load(reset: false) } } label: {
                                 HStack {
                                     if loading { ProgressView() }
@@ -71,14 +71,21 @@ struct MediaSearchView: View {
                         }
                     }
                 )
-                .refreshable { await load(reset: true, refresh: true) }
-                .task(id: SearchKey(filter: filter, revision: searchID)) { await load(reset: true) }
+                .refreshable {
+                    if !submittedQuery.isEmpty { await load(reset: true, refresh: true) }
+                }
+                .task(id: searchID) { await load(reset: true) }
                 .onAppear { consumeQuery() }
                 .onChange(of: store.searchQuery) { _, _ in consumeQuery() }
+                .onChange(of: query) { _, value in
+                    if !submittedQuery.isEmpty, value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        submit()
+                    }
+                }
                 .onDisappear { searchFocused = false }
             }
             .background(CineBackdrop())
-            .navigationTitle("TMDB 片库")
+            .navigationTitle("片名搜索")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) { ServerIndicator() }
@@ -109,78 +116,12 @@ struct MediaSearchView: View {
                     query = ""
                     submit()
                 } label: { Image(systemName: "xmark.circle.fill") }
-                    .foregroundStyle(.secondary).accessibilityLabel("清空片名并浏览片库")
+                    .foregroundStyle(.secondary).accessibilityLabel("清空片名和搜索结果")
             }
             Button("搜索", action: submit).fontWeight(.semibold)
+                .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding(14).background(.background, in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private var controls: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Picker("作品类型", selection: Binding(
-                get: { filter.kind },
-                set: { filter.kind = $0; filter.genre = "" }
-            )) {
-                ForEach(MediaKind.allCases) { Text($0.title).tag($0) }
-            }.pickerStyle(.segmented)
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 6) {
-                    genrePicker
-                    regionPicker
-                    yearPicker
-                    sortPicker
-                }
-                .fixedSize(horizontal: true, vertical: false)
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack { genrePicker; Spacer(); regionPicker }
-                    HStack { yearPicker; Spacer(); sortPicker }
-                }
-            }
-            if filter.searching {
-                Text("片名搜索支持作品类型和年份；清空片名可按分类、地区和排序探索。")
-                    .font(.caption).foregroundStyle(.secondary)
-            }
-            Button("重置筛选") {
-                searchFocused = false
-                query = ""
-                filter = MediaExploreFilter()
-            }.font(.caption)
-        }
-    }
-
-    private var genrePicker: some View {
-        Picker("分类", selection: $filter.genre) {
-            Text("全部分类").tag("")
-            ForEach(filter.genres) { Text($0.title).tag($0.id) }
-        }.disabled(filter.searching)
-    }
-
-    private var regionPicker: some View {
-        Picker("地区", selection: $filter.region) {
-            Text("全部地区").tag("")
-            ForEach(MediaExploreFilter.regions) { Text($0.title).tag($0.id) }
-        }.disabled(filter.searching)
-    }
-
-    private var yearPicker: some View {
-        Picker("年份", selection: $filter.year) {
-            Text("全部年份").tag("")
-            ForEach(MediaExploreFilter.years, id: \.self) { Text($0).tag($0) }
-        }
-    }
-
-    private var sortPicker: some View {
-        Picker("排序", selection: $filter.sort) {
-            Text("热度").tag("popular")
-            Text("最新").tag("latest")
-            Text("评分").tag("rating")
-        }.disabled(filter.searching)
-    }
-
-    private struct SearchKey: Equatable {
-        let filter: MediaExploreFilter
-        let revision: UUID
     }
 
     private func consumeQuery() {
@@ -192,7 +133,7 @@ struct MediaSearchView: View {
 
     private func submit() {
         searchFocused = false
-        filter.query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        submittedQuery = query.trimmingCharacters(in: .whitespacesAndNewlines)
         searchID = UUID()
     }
 
@@ -201,32 +142,31 @@ struct MediaSearchView: View {
         if !reset && loading { return }
         let identity = UUID()
         requestID = identity
-        let currentFilter = filter
+        let currentQuery = submittedQuery
         let nextPage = reset ? 1 : page + 1
+        let kinds = reset ? MediaKind.allCases : MediaKind.allCases.filter { remainingKinds.contains($0) }
         if reset {
             refreshID = identity
             items = []
             page = 0
-            hasMore = false
+            remainingKinds = []
             stale = false
         }
         loading = true
         error = nil
         defer { if requestID == identity { loading = false } }
+        guard !currentQuery.isEmpty else { return }
         do {
-            guard currentFilter.query.utf8.count <= 200 else {
-                throw APIError.validation("搜索片名最多 200 字节，请缩短关键词。")
-            }
-            let result: RankingPage = try await store.requireClient().get(
-                "api/resources/explore", query: currentFilter.query(page: nextPage, refresh: refresh)
+            let result = try await store.requireClient().searchTitles(
+                currentQuery, page: nextPage, kinds: kinds, refresh: refresh
             )
             try Task.checkCancellation()
-            guard requestID == identity, filter == currentFilter else { return }
+            guard requestID == identity, submittedQuery == currentQuery else { return }
             var seen = Set(items.map(\.stableID))
-            items += (result.items ?? []).filter { seen.insert($0.stableID).inserted }
-            page = result.page
-            hasMore = result.hasMore
-            stale = stale || result.stale == true
+            items += result.items.filter { seen.insert($0.stableID).inserted }
+            page = nextPage
+            remainingKinds = result.remainingKinds
+            stale = stale || result.stale
         } catch {
             if !isCancellation(error), requestID == identity { self.error = error.localizedDescription }
         }

@@ -40,36 +40,6 @@ final class CatalogContractTests: XCTestCase {
         XCTAssertTrue(filter.categories.contains { $0.id == "movie_top250" })
     }
 
-    func testExploreBrowsingPreservesBackendFilterNames() async throws {
-        var filter = MediaExploreFilter()
-        filter.kind = .tv
-        filter.genre = "10765"
-        filter.region = "western"
-        filter.year = "2025"
-        filter.sort = "rating"
-        XCTAssertEqual(values(filter.query(page: 2, refresh: true)), [
-            "source": "tmdb", "kind": "tv", "genre": "10765", "region": "western",
-            "year": "2025", "sort": "rating", "page": "2", "refresh": "1"
-        ])
-        XCTAssertTrue(filter.genres.contains { $0.id == "10765" })
-        XCTAssertFalse(filter.genres.contains { $0.id == "28" })
-    }
-
-    func testExploreTitleSearchOmitsUnsupportedDiscoveryFilters() async throws {
-        var filter = MediaExploreFilter()
-        filter.query = "  A&B + 测试  "
-        filter.genre = "28"
-        filter.region = "CN"
-        filter.sort = "rating"
-        filter.year = "2026"
-        XCTAssertEqual(values(filter.query(page: 1)), [
-            "source": "tmdb", "kind": "movie", "q": "A&B + 测试", "year": "2026", "page": "1"
-        ])
-        filter.query = " \n "
-        XCTAssertFalse(filter.searching)
-        XCTAssertEqual(values(filter.query(page: 1))["genre"], "28")
-    }
-
     func testNativeCatalogIDsStayDistinctAndNeverBecomeTMDBIDs() async throws {
         for source in ["anilist", "bangumi", "imdb", "maoyan", "tencent", "douban"] {
             let item = try media(source: source, id: 42, originID: "native-42")

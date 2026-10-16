@@ -91,52 +91,6 @@ struct RecommendationFilter: Equatable {
     }
 }
 
-struct MediaExploreFilter: Equatable {
-    var kind: MediaKind = .movie
-    var query = ""
-    var genre = ""
-    var region = ""
-    var year = ""
-    var sort = "popular"
-
-    var searching: Bool { !query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-    var genres: [CatalogChoice] {
-        kind == .movie ? [
-            .init("28", "动作"), .init("12", "冒险"), .init("16", "动画"), .init("35", "喜剧"),
-            .init("80", "犯罪"), .init("99", "纪录片"), .init("18", "剧情"), .init("10751", "家庭"),
-            .init("14", "奇幻"), .init("36", "历史"), .init("27", "恐怖"), .init("10402", "音乐"),
-            .init("9648", "悬疑"), .init("10749", "爱情"), .init("878", "科幻"), .init("53", "惊悚"),
-            .init("10752", "战争"), .init("37", "西部")
-        ] : [
-            .init("10759", "动作冒险"), .init("16", "动画"), .init("35", "喜剧"), .init("80", "犯罪"),
-            .init("99", "纪录片"), .init("18", "剧情"), .init("10751", "家庭"), .init("10762", "儿童"),
-            .init("9648", "悬疑"), .init("10763", "新闻"), .init("10764", "真人秀"),
-            .init("10765", "科幻奇幻"), .init("10766", "肥皂剧"), .init("10767", "脱口秀"),
-            .init("10768", "战争政治"), .init("37", "西部")
-        ]
-    }
-    static let regions: [CatalogChoice] = [
-        .init("CN", "大陆"), .init("HK", "香港"), .init("TW", "台湾"), .init("JP", "日本"),
-        .init("KR", "韩国"), .init("western", "欧美")
-    ]
-    static var years: [String] {
-        stride(from: Calendar.current.component(.year, from: Date()), through: 2007, by: -1).map(String.init)
-    }
-
-    func query(page: Int, refresh: Bool = false) -> [URLQueryItem] {
-        var values = ["source": "tmdb", "kind": kind.rawValue, "page": String(page), "year": year]
-        if searching {
-            values["q"] = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        } else {
-            values["genre"] = genre
-            values["region"] = region
-            values["sort"] = sort
-        }
-        if refresh { values["refresh"] = "1" }
-        return values.sorted { $0.key < $1.key }.map { URLQueryItem(name: $0.key, value: $0.value) }
-    }
-}
-
 struct MediaCatalogSection: Identifiable {
     let id: String
     var title = ""
@@ -151,7 +105,55 @@ struct CatalogResolution: Decodable {
     let media: MediaItem?
 }
 
+struct MediaTitleSearchPage {
+    let items: [MediaItem]
+    let remainingKinds: Set<MediaKind>
+    let stale: Bool
+}
+
 extension APIClient {
+    func searchTitles(
+        _ title: String, page: Int = 1, kinds: [MediaKind] = MediaKind.allCases, refresh: Bool = false
+    ) async throws -> MediaTitleSearchPage {
+        let title = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty else {
+            return MediaTitleSearchPage(items: [], remainingKinds: [], stale: false)
+        }
+        guard title.utf8.count <= 200 else {
+            throw APIError.validation("搜索片名最多 200 字节，请缩短关键词。")
+        }
+        return try await withThrowingTaskGroup(of: (MediaKind, RankingPage).self) { group in
+            for kind in Set(kinds) {
+                group.addTask {
+                    var query = [
+                        URLQueryItem(name: "source", value: "tmdb"),
+                        URLQueryItem(name: "kind", value: kind.rawValue),
+                        URLQueryItem(name: "q", value: title),
+                        URLQueryItem(name: "page", value: String(page))
+                    ]
+                    if refresh { query.append(URLQueryItem(name: "refresh", value: "1")) }
+                    let result: RankingPage = try await self.get("api/resources/explore", query: query)
+                    return (kind, result)
+                }
+            }
+            var pages: [MediaKind: RankingPage] = [:]
+            for try await (kind, result) in group { pages[kind] = result }
+            try Task.checkCancellation()
+            var items: [MediaItem] = []
+            // Interleave movie and TV matches while preserving each source's result order.
+            let count = pages.values.map { $0.items?.count ?? 0 }.max() ?? 0
+            for index in 0..<count {
+                for kind in MediaKind.allCases {
+                    if let values = pages[kind]?.items, index < values.count { items.append(values[index]) }
+                }
+            }
+            return MediaTitleSearchPage(
+                items: items, remainingKinds: Set(pages.filter { $0.value.hasMore }.map { $0.key }),
+                stale: pages.values.contains { $0.stale == true }
+            )
+        }
+    }
+
     func resolveCatalog(_ item: MediaItem, detail: MediaDetail? = nil) async throws -> CatalogResolution {
         struct Hint: Encodable {
             let title: String

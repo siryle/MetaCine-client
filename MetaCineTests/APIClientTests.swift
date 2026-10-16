@@ -200,30 +200,62 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(requests.all.count, 2)
     }
 
-    func testExploreUsesCatalogEndpointAndDecodesPagination() async throws {
+    func testTitleSearchCombinesMovieAndTVResultsAndTracksPagination() async throws {
         let requests = RecordedRequests()
         StubURLProtocol.lock.withLock {
             StubURLProtocol.handler = { request in
                 requests.append(request)
+                let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
+                let query = Dictionary(uniqueKeysWithValues: (parts.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+                let kind = query["kind"]!
+                let more = kind == "movie"
                 return (200, [:], Data("""
-                {"items":[{"id":42,"kind":"tv","title":"Example Show","source":"tmdb"}],
-                "page":2,"total_pages":4,"has_more":true,"source":"tmdb","stale":false}
+                {"items":[{"id":42,"kind":"\(kind)","title":"Example","source":"tmdb"}],
+                "page":\(query["page"]!),"total_pages":4,"has_more":\(more),"source":"tmdb","stale":false}
                 """.utf8))
             }
         }
         let api = try client()
         defer { api.invalidate() }
-        var filter = MediaExploreFilter()
-        filter.kind = .tv
-        filter.query = "A&B + 测试"
-        let page: RankingPage = try await api.get("api/resources/explore", query: filter.query(page: 2))
-        let url = try XCTUnwrap(requests.all.first?.url)
-        let parts = try XCTUnwrap(URLComponents(url: url, resolvingAgainstBaseURL: false))
-        XCTAssertEqual(parts.path, "/cinema/api/resources/explore")
-        XCTAssertEqual(parts.queryItems?.first { $0.name == "q" }?.value, "A&B + 测试")
-        XCTAssertEqual(page.page, 2)
-        XCTAssertTrue(page.hasMore)
-        XCTAssertEqual(page.items?.first?.tmdbID, 42)
+        let page = try await api.searchTitles("  A&B + 测试  ", page: 2, refresh: true)
+        XCTAssertEqual(page.items.map(\.kind), ["movie", "tv"])
+        XCTAssertEqual(Set(page.items.map(\.stableID)).count, 2)
+        XCTAssertEqual(page.remainingKinds, [.movie])
+        XCTAssertEqual(requests.all.count, 2)
+        for request in requests.all {
+            let parts = try XCTUnwrap(URLComponents(url: request.url!, resolvingAgainstBaseURL: false))
+            let query = Dictionary(uniqueKeysWithValues: (parts.queryItems ?? []).map { ($0.name, $0.value ?? "") })
+            XCTAssertEqual(parts.path, "/cinema/api/resources/explore")
+            XCTAssertEqual(query, [
+                "source": "tmdb", "kind": query["kind"]!, "q": "A&B + 测试", "page": "2", "refresh": "1"
+            ])
+        }
+        let next = try await api.searchTitles("A&B + 测试", page: 3, kinds: Array(page.remainingKinds))
+        XCTAssertEqual(next.items.map(\.kind), ["movie"])
+        XCTAssertEqual(requests.all.count, 3)
+    }
+
+    func testEmptyAndOversizedTitleSearchesNeverRequestRecommendations() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                XCTFail("Blank or oversized titles must not issue a request.")
+                return (200, [:], Data("{}".utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let page = try await api.searchTitles(" \n ")
+        XCTAssertTrue(page.items.isEmpty)
+        XCTAssertTrue(page.remainingKinds.isEmpty)
+        do {
+            _ = try await api.searchTitles(String(repeating: "片", count: 67))
+            XCTFail("Oversized titles must fail validation.")
+        } catch {
+            guard case APIError.validation = error else { return XCTFail("Expected a title validation error.") }
+        }
+        XCTAssertTrue(requests.all.isEmpty)
     }
 
     func testNativeCatalogResolutionUsesServerMatchingEndpoint() async throws {
