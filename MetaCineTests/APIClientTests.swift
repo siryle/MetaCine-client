@@ -433,10 +433,6 @@ final class APIClientTests: XCTestCase {
                     XCTAssertEqual((body["media"] as? [String: Any])?["tmdb_id"] as? Int, 42)
                     return (503, [:], Data(#"{"error":"RE0 unavailable"}"#.utf8))
                 }
-                if body["source"] as? String == "hdhaven" {
-                    XCTAssertEqual((body["media"] as? [String: Any])?["tmdb_id"] as? Int, 42)
-                    return (200, [:], Data(#"{"results":[],"warnings":[]}"#.utf8))
-                }
                 XCTAssertEqual(body["source"] as? String, "telegram")
                 XCTAssertNil(body["media"])
                 return (200, [:], Data(#"{"results":[],"warnings":["Channel unavailable"]}"#.utf8))
@@ -451,16 +447,16 @@ final class APIClientTests: XCTestCase {
         } catch { XCTAssertEqual(error.localizedDescription, "RE0 unavailable") }
         let telegram = try await api.searchResources(" Example ", source: .telegram, media: hint)
         XCTAssertEqual(telegram.warnings, ["Channel unavailable"])
-        _ = try await api.searchResources("Example", source: .hdhaven, media: hint)
         do {
             _ = try await api.searchResources("Example", source: .all)
             XCTFail("Providers must be searched independently.")
         } catch { }
-        XCTAssertEqual(Set(ResourceSource.providers), [.re0, .hdhaven, .telegram])
-        XCTAssertEqual(requests.all.count, 3)
+        XCTAssertEqual(Set(ResourceSource.providers), [.re0, .telegram])
+        XCTAssertEqual(ResourceSource.allCases, [.all, .re0, .telegram])
+        XCTAssertEqual(requests.all.count, 2)
     }
 
-    func testRE0AndHDHavenCanResolveNativeTitlesWithoutTMDBIdentity() async throws {
+    func testRE0CanResolveNativeTitlesWithoutTMDBIdentity() async throws {
         let requests = RecordedRequests()
         StubURLProtocol.lock.withLock {
             StubURLProtocol.handler = { request in
@@ -475,10 +471,8 @@ final class APIClientTests: XCTestCase {
         let api = try client()
         defer { api.invalidate() }
         let hint = ResourceMediaHint(SubscriptionDraft(title: "Example", kind: .tv))
-        for source in [ResourceSource.re0, .hdhaven] {
-            _ = try await api.searchResources("Example", source: source, media: hint)
-        }
-        XCTAssertEqual(requests.all.count, 2)
+        _ = try await api.searchResources("Example", source: .re0, media: hint)
+        XCTAssertEqual(requests.all.count, 1)
     }
 
     func testEditedSearchQueryDoesNotReusePreviousMediaIdentity() async throws {
@@ -493,12 +487,10 @@ final class APIClientTests: XCTestCase {
         let api = try client()
         defer { api.invalidate() }
         let hint = ResourceMediaHint(SubscriptionDraft(title: "Example", tmdbID: 42))
-        for source in [ResourceSource.re0, .hdhaven] {
-            _ = try await api.searchResources("Another", source: source, media: hint)
-        }
+        _ = try await api.searchResources("Another", source: .re0, media: hint)
     }
 
-    func testTitleOnlySearchReachesRE0AndHDHavenWithoutMediaHint() async throws {
+    func testTitleOnlySearchReachesRE0WithoutMediaHint() async throws {
         let requests = RecordedRequests()
         StubURLProtocol.lock.withLock {
             StubURLProtocol.handler = { request in
@@ -510,63 +502,8 @@ final class APIClientTests: XCTestCase {
         }
         let api = try client()
         defer { api.invalidate() }
-        for source in [ResourceSource.re0, .hdhaven] {
-            _ = try await api.searchResources("Example", source: source)
-        }
-        XCTAssertEqual(requests.all.count, 2)
-    }
-
-    func testHDHavenUnlockIncludesWorkIdentityAndKeepsResourceIDStable() async throws {
-        let requests = RecordedRequests()
-        StubURLProtocol.lock.withLock {
-            StubURLProtocol.handler = { request in
-                requests.append(request)
-                XCTAssertEqual(request.url?.path, "/cinema/api/hdhaven/resources/unlock")
-                let body = try requestJSON(request)
-                XCTAssertEqual(body["slug"] as? String, "0123456789abcdef0123456789abcdef")
-                XCTAssertEqual(body["tmdb_id"] as? Int, 42)
-                XCTAssertEqual(body["kind"] as? String, "tv")
-                XCTAssertEqual(body["allow_paid"] as? Bool, true)
-                XCTAssertEqual(body["max_points"] as? Int, 4)
-                return (200, [:], Data(#"{"text":"https://115.com/s/example?password=abc1","type":"share"}"#.utf8))
-            }
-        }
-        let api = try client()
-        defer { api.invalidate() }
-        let result = try APIClient.decoder.decode(ResourceResult.self, from: Data("""
-        {"source":"hdhaven","slug":"0123456789abcdef0123456789abcdef","unlock_points":4,
-        "title":"Example","channel":"HDHaven","post_url":"https://hdhaven.test/resource/example",
-        "share_url":"","type":"share","tmdb_id":42,"kind":"tv"}
-        """.utf8))
-        XCTAssertEqual(result.resourceSource, .hdhaven)
-        XCTAssertTrue(result.needsUnlock)
-        let unlocked = try await api.unlockResource(result)
-        XCTAssertEqual(unlocked.id, result.id)
-        XCTAssertFalse(unlocked.needsUnlock)
+        _ = try await api.searchResources("Example", source: .re0)
         XCTAssertEqual(requests.all.count, 1)
-    }
-
-    func testHDHavenSubscriptionUsesItsOwnAccountDefaults() async throws {
-        let requests = RecordedRequests()
-        StubURLProtocol.lock.withLock {
-            StubURLProtocol.handler = { request in
-                requests.append(request)
-                if request.url!.path.hasSuffix("/hdhaven/config") {
-                    return (200, [:], Data(#"{"max_points":6}"#.utf8))
-                }
-                let body = try requestJSON(request)
-                XCTAssertEqual(body["source"] as? String, "hdhaven")
-                XCTAssertEqual(body["max_points"] as? Int, 6)
-                return (200, [:], try savedSubscription(body))
-            }
-        }
-        let api = try client()
-        defer { api.invalidate() }
-        let saved = try await api.saveSubscription(SubscriptionDraft(title: "Example", tmdbID: 42, source: .hdhaven))
-        XCTAssertEqual(saved.resourceSource, .hdhaven)
-        XCTAssertEqual(requests.all.map { $0.url!.path }, [
-            "/cinema/api/hdhaven/config", "/cinema/api/resources/subscriptions"
-        ])
     }
 
     func testRE0UnlockOnlyObtainsLinkAndNeverSubmitsTransfer() async throws {
@@ -579,6 +516,8 @@ final class APIClientTests: XCTestCase {
                 XCTAssertEqual(body["slug"] as? String, "0123456789abcdef0123456789abcdef")
                 XCTAssertEqual(body["allow_paid"] as? Bool, true)
                 XCTAssertEqual(body["max_points"] as? Int, 4)
+                XCTAssertNil(body["tmdb_id"])
+                XCTAssertNil(body["kind"])
                 return (200, [:], Data(#"{"text":"https://115.com/s/example?password=abc1","type":"share"}"#.utf8))
             }
         }

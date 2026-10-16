@@ -173,7 +173,7 @@ struct ResourceSearchView: View {
                 ContentUnavailableView {
                     Label("好资源，从这里找到", systemImage: "sparkle.magnifyingglass")
                 } description: {
-                    Text("同时搜索 RE0、HDHaven 和 Telegram，支持 115、磁力和电驴资源。")
+                    Text("同时搜索 RE0 和 Telegram，支持 115、磁力和电驴资源。")
                 }
             } else {
                 Text("“\(submittedQuery)” · \(results.count) 个资源\(loading ? " · 搜索中…" : "")")

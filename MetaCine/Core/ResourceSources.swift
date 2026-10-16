@@ -1,20 +1,18 @@
 import Foundation
 
 enum ResourceSource: String, Codable, CaseIterable, Identifiable {
-    case all, re0, hdhaven, telegram
+    case all, re0, telegram
     var id: String { rawValue }
     var title: String {
         switch self {
         case .all: "全部来源"
         case .re0: "RE0"
-        case .hdhaven: "HDHaven"
         case .telegram: "Telegram"
         }
     }
-    var supportsUnlock: Bool { self == .re0 || self == .hdhaven }
+    var supportsUnlock: Bool { self == .re0 }
     var usesUnlockPoints: Bool { self != .telegram }
-    var unlockProvider: Self { self == .hdhaven ? .hdhaven : .re0 }
-    static let providers: [Self] = [.re0, .hdhaven, .telegram]
+    static let providers: [Self] = [.re0, .telegram]
 }
 
 struct ResourceMediaHint: Encodable {
@@ -62,8 +60,6 @@ struct ResourceUnlockBody: Encodable {
     let slug: String
     let allowPaid: Bool
     let maxPoints: Int
-    let tmdbID: Int?
-    let kind: String?
 
     init(_ result: ResourceResult) throws {
         guard result.needsUnlock, let slug = result.slug, !slug.isEmpty else {
@@ -72,16 +68,9 @@ struct ResourceUnlockBody: Encodable {
         guard result.unlocked == true || (result.unlockPoints.map { (0...10000).contains($0) } ?? false) else {
             throw APIError.validation("资源积分未知或超过上限，请在 \(result.resourceSource.title) 核对后重试。")
         }
-        if result.resourceSource == .hdhaven {
-            guard (result.tmdbID ?? 0) > 0, MediaKind(rawValue: result.kind ?? "") != nil else {
-                throw APIError.validation("HDHaven 解锁需要有效的 TMDB ID 和媒体类型。")
-            }
-        }
         self.slug = slug
         allowPaid = result.unlocked != true && (result.unlockPoints ?? 0) > 0
         maxPoints = result.unlocked == true ? 0 : result.unlockPoints ?? 0
-        tmdbID = result.resourceSource == .hdhaven ? result.tmdbID : nil
-        kind = result.resourceSource == .hdhaven ? result.kind : nil
     }
 }
 
@@ -95,10 +84,8 @@ struct ResourceUnlockConfig: Decodable {
 }
 
 extension APIClient {
-    func defaultUnlockPoints(source: ResourceSource = .re0) async throws -> Int {
-        let config: ResourceUnlockConfig = try await get(
-            source == .hdhaven ? "api/hdhaven/config" : "api/re0/unlock/config"
-        )
+    func defaultUnlockPoints() async throws -> Int {
+        let config: ResourceUnlockConfig = try await get("api/re0/unlock/config")
         guard (0...10000).contains(config.maxPoints) else { throw APIError.invalidResponse }
         return config.maxPoints
     }
@@ -108,7 +95,7 @@ extension APIClient {
         if value.maxPoints == nil {
             // PUT does not inherit defaults; existing subscriptions must keep their saved limit.
             if value.id == nil && value.source.usesUnlockPoints {
-                value.maxPoints = try await defaultUnlockPoints(source: value.source)
+                value.maxPoints = try await defaultUnlockPoints()
             } else {
                 value.maxPoints = 0
             }
@@ -126,7 +113,7 @@ extension APIClient {
             throw APIError.validation("请输入 1–200 字节的搜索关键词。")
         }
         guard ResourceSource.providers.contains(source) else {
-            throw APIError.validation("请分别查询 RE0、HDHaven 或 Telegram 资源。")
+            throw APIError.validation("请分别查询 RE0 或 Telegram 资源。")
         }
         let hint = media.flatMap { $0.matchesQuery(query) ? $0 : nil }
         return try await send("POST", "api/resources/search", body: ResourceSearchBody(
@@ -136,7 +123,7 @@ extension APIClient {
 
     func unlockResource(_ result: ResourceResult) async throws -> ResourceResult {
         let response: ResourceUnlockResponse = try await send(
-            "POST", "api/\(result.resourceSource.rawValue)/resources/unlock", body: ResourceUnlockBody(result)
+            "POST", "api/re0/resources/unlock", body: ResourceUnlockBody(result)
         )
         guard !response.text.isEmpty, response.type == result.type else { throw APIError.invalidResponse }
         var unlocked = result

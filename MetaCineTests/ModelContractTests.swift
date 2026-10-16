@@ -106,7 +106,7 @@ final class ModelContractTests: XCTestCase {
     }
 
     func testSubscriptionEditsAndPausePreserveSourceAndUnlockLimit() async throws {
-        for source in ["all", "re0", "hdhaven", "telegram"] {
+        for source in ["all", "re0", "telegram"] {
             let sub = try APIClient.decoder.decode(ResourceSubscription.self, from: Data("""
             {"id":"sub1","title":"Example","kind":"tv","tmdb_id":42,"resource_type":"any",
             "source":"\(source)","auto_unlock":true,"max_points":8,
@@ -150,21 +150,6 @@ final class ModelContractTests: XCTestCase {
         draft.source = .all
         draft.tmdbID = 0
         XCTAssertNoThrow(try draft.validated())
-    }
-
-    func testHDHavenSubscriptionAndUnlockRequireWorkIdentity() async throws {
-        var draft = SubscriptionDraft(title: "Example", source: .hdhaven)
-        XCTAssertThrowsError(try draft.validated())
-        draft.tmdbID = 42
-        XCTAssertNoThrow(try draft.validated())
-        for (id, kind) in [(0, "tv"), (42, ""), (42, "person")] {
-            let result = try APIClient.decoder.decode(ResourceResult.self, from: Data("""
-            {"source":"hdhaven","slug":"abc","unlock_points":0,"tmdb_id":\(id),"kind":"\(kind)",
-            "title":"Example","channel":"HDHaven","post_url":"https://hdhaven.test/resource/abc",
-            "share_url":"","type":"share"}
-            """.utf8))
-            XCTAssertThrowsError(try ResourceUnlockBody(result))
-        }
     }
 
     func testLockedRE0ResourceIdentitySurvivesUnlockAndPreservesCost() async throws {

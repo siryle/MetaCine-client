@@ -114,7 +114,7 @@ struct SubscriptionsView: View {
                     }
                     Text(subscriptionInfo(sub)).font(.caption).foregroundStyle(.secondary)
                     if sub.resourceSource.usesUnlockPoints {
-                        Text(sub.autoUnlock == true ? "\(sub.resourceSource.unlockProvider.title) ≤ \(sub.maxPoints ?? 0) 积分 / 资源" : "\(sub.resourceSource.unlockProvider.title) 免费 / 已解锁资源")
+                        Text(sub.autoUnlock == true ? "RE0 ≤ \(sub.maxPoints ?? 0) 积分 / 资源" : "RE0 免费 / 已解锁资源")
                             .font(.caption2).foregroundStyle(.secondary)
                     }
                     if let quality = sub.quality, !quality.isEmpty { Text(quality).font(.caption).foregroundStyle(.secondary) }
