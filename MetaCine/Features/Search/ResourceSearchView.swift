@@ -41,81 +41,33 @@ struct ResourceSearchView: View {
 
     var body: some View {
         NavigationStack {
-            ConnectionGate {
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 20) {
-                        SectionEyebrow(text: "SEARCH / RESOURCES")
-                        HStack(spacing: 12) {
-                            Image(systemName: "magnifyingglass").foregroundStyle(CineTheme.accent)
-                            TextField("搜索电影、电视剧…", text: $query)
-                                .focused($searchFocused)
-                                .submitLabel(.search).onSubmit(submit)
-                                .autocorrectionDisabled()
-                                .background {
-                                    GeometryReader { geometry in
-                                        Color.clear.preference(
-                                            key: SearchFieldBoundsKey.self,
-                                            value: geometry.frame(in: .named("resource-search"))
-                                        )
-                                    }
-                                }
-                            if !query.isEmpty {
-                                Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
-                                    .foregroundStyle(.secondary).accessibilityLabel("清空关键词")
-                            }
-                            Button("搜索", action: submit).fontWeight(.semibold).disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        }
-                        .padding(14).background(.background, in: RoundedRectangle(cornerRadius: 16))
-                        Picker("资源来源", selection: $sourceFilter) {
-                            ForEach(ResourceSource.allCases) { source in
-                                let count = source == .all ? results.count : results.filter { $0.resourceSource == source }.count
-                                Text("\(source.title) \(count)").tag(source)
-                            }
-                        }.pickerStyle(.segmented)
-                        searchResults
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }.padding(20)
-                }
-                .coordinateSpace(name: "resource-search")
-                .contentShape(Rectangle())
-                .onPreferenceChange(SearchFieldBoundsKey.self) { searchFieldBounds = $0 }
-                .simultaneousGesture(
-                    SpatialTapGesture(coordinateSpace: .named("resource-search")).onEnded { value in
-                        if !searchFieldBounds.isEmpty, !searchFieldBounds.contains(value.location) {
-                            searchFocused = false
-                        }
-                    }
-                )
-                .scrollDismissesKeyboard(.interactively)
-                .refreshable { if searched { await search() } }
-                .task(id: searchID) { if !submittedQuery.isEmpty { await search() } }
-                .onAppear {
-                    guard !initialized else { return }
-                    initialized = true
-                    query = initialQuery
-                    if !query.isEmpty { submit() }
-                }
-                .onDisappear { searchFocused = false }
-            }
+            searchPage
+                .sheet(item: $draft) { value in SubscriptionEditor(draft: value) }
+                .sheet(item: $openedJob) { job in NavigationStack { JobDetailView(jobID: job.id) } }
+                .cineNotice($notice)
+        }
+    }
+
+    private var searchPage: some View {
+        resourceDialogs
             .background(CineBackdrop())
             .navigationTitle("资源搜索")
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() } }
-                ToolbarItem(placement: .topBarTrailing) { ServerIndicator() }
-                ToolbarItemGroup(placement: .keyboard) {
-                    Spacer()
-                    Button("完成") { searchFocused = false }
-                }
-            }
-            .sheet(item: $draft) { value in SubscriptionEditor(draft: value) }
-            .sheet(item: $openedJob) { job in NavigationStack { JobDetailView(jobID: job.id) } }
-            .confirmationDialog("将此资源交给服务器转存或离线下载？", isPresented: Binding(
-                get: { transfer != nil }, set: { if !$0 { transfer = nil } }
-            ), titleVisibility: .visible, presenting: transfer) { result in
-                Button("开始转存 / 下载") { Task { await performTransfer(result) } }
-                Button("取消", role: .cancel) {}
-            } message: { result in Text(result.title) }
-            .confirmationDialog("获取 \(unlock?.resourceSource.title ?? "") 资源链接？", isPresented: Binding(
+            .toolbar { searchToolbar }
+    }
+
+    @ToolbarContentBuilder
+    private var searchToolbar: some ToolbarContent {
+        ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() } }
+        ToolbarItem(placement: .topBarTrailing) { ServerIndicator() }
+        ToolbarItemGroup(placement: .keyboard) {
+            Spacer()
+            Button("完成") { searchFocused = false }
+        }
+    }
+
+    private var resourceDialogs: some View {
+        transferConfirmation
+            .confirmationDialog("获取 \(unlock?.resourceSource.title ?? "") 资源链接？", isPresented: Binding<Bool>(
                 get: { unlock != nil }, set: { if !$0 { unlock = nil } }
             ), titleVisibility: .visible, presenting: unlock) { result in
                 Button("确认获取链接") { Task { await performUnlock(result) } }
@@ -123,8 +75,95 @@ struct ResourceSearchView: View {
             } message: { result in
                 Text(result.unlocked == true ? "资源已解锁，确认获取链接？" : "预计消耗 \(result.unlockPoints ?? 0) 积分，服务端会在解锁前核对积分上限。")
             }
-            .cineNotice($notice)
+    }
+
+    private var transferConfirmation: some View {
+        ConnectionGate { searchContent }
+            .confirmationDialog("将此资源交给服务器转存或离线下载？", isPresented: Binding<Bool>(
+                get: { transfer != nil }, set: { if !$0 { transfer = nil } }
+            ), titleVisibility: .visible, presenting: transfer) { result in
+                Button("开始转存 / 下载") { Task { await performTransfer(result) } }
+                Button("取消", role: .cancel) {}
+            } message: { result in Text(result.title) }
+    }
+
+    private var searchContent: some View {
+        searchScrollView
+            .scrollDismissesKeyboard(.interactively)
+            .refreshable { if searched { await search() } }
+            .task(id: searchID) { if !submittedQuery.isEmpty { await search() } }
+            .onAppear(perform: initializeSearch)
+            .onDisappear { searchFocused = false }
+    }
+
+    private var searchScrollView: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                SectionEyebrow(text: "SEARCH / RESOURCES")
+                searchBar
+                sourcePicker
+                searchResults.frame(maxWidth: .infinity, alignment: .leading)
+            }.padding(20)
         }
+        .coordinateSpace(name: "resource-search")
+        .contentShape(Rectangle())
+        .onPreferenceChange(SearchFieldBoundsKey.self) { searchFieldBounds = $0 }
+        .simultaneousGesture(
+            SpatialTapGesture(coordinateSpace: .named("resource-search")).onEnded { value in
+                if !searchFieldBounds.isEmpty, !searchFieldBounds.contains(value.location) {
+                    searchFocused = false
+                }
+            }
+        )
+    }
+
+    private var searchBar: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "magnifyingglass").foregroundStyle(CineTheme.accent)
+            searchInput
+            if !query.isEmpty {
+                Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                    .foregroundStyle(.secondary).accessibilityLabel("清空关键词")
+            }
+            Button("搜索", action: submit)
+                .fontWeight(.semibold)
+                .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        }
+        .padding(14).background(.background, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    private var searchInput: some View {
+        TextField("搜索电影、电视剧…", text: $query)
+            .focused($searchFocused)
+            .submitLabel(.search).onSubmit(submit)
+            .autocorrectionDisabled()
+            .background {
+                GeometryReader { geometry in
+                    Color.clear.preference(
+                        key: SearchFieldBoundsKey.self,
+                        value: geometry.frame(in: .named("resource-search"))
+                    )
+                }
+            }
+    }
+
+    private var sourcePicker: some View {
+        Picker("资源来源", selection: $sourceFilter) {
+            ForEach(ResourceSource.allCases) { source in
+                Text("\(source.title) \(resultCount(for: source))").tag(source)
+            }
+        }.pickerStyle(.segmented)
+    }
+
+    private func resultCount(for source: ResourceSource) -> Int {
+        source == .all ? results.count : results.filter { $0.resourceSource == source }.count
+    }
+
+    private func initializeSearch() {
+        guard !initialized else { return }
+        initialized = true
+        query = initialQuery
+        if !query.isEmpty { submit() }
     }
 
     private var searchResults: some View {
