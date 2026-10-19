@@ -377,8 +377,9 @@ struct Job: Decodable, Identifiable {
     let processed: Int
     let message: String
     let warnings: [String]?
+    let resourceKey: String?
 
-    var isActive: Bool { ["scanning", "executing", "deduplicating"].contains(status) }
+    var isActive: Bool { ["queued", "scanning", "executing", "deduplicating"].contains(status) }
     var isProblem: Bool { ["failed", "error", "partial", "interrupted"].contains(status) }
     var progress: Double { scanned > 0 ? min(Double(processed) / Double(scanned), 1) : 0 }
 }
@@ -390,6 +391,10 @@ struct JobEntry: Decodable, Identifiable {
     let status: String
     let message: String
     let size: Int64
+    let moved: Bool?
+    let identity: JobMediaIdentity?
+    let media: MediaItem?
+    let candidates: [MediaItem]?
 }
 
 struct JobDeletionResponse: Decodable {
@@ -407,6 +412,7 @@ struct TransferResponse: Decodable {
 enum JobStatus {
     static func title(_ value: String) -> String {
         [
+            "queued": "排队中", "ambiguous": "待校正", "conflict": "路径冲突", "no_subtitle": "无匹配字幕",
             "scanning": "扫描中", "executing": "执行中", "deduplicating": "去重中",
             "preview": "待确认", "completed": "已完成", "partial": "部分完成",
             "failed": "失败", "error": "错误", "cancelled": "已取消",

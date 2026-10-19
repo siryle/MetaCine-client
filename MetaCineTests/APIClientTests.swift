@@ -690,6 +690,100 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(requests.all.count, 2)
     }
 
+    func testCorrectionUpdatesPreviewBeforeExplicitExecution() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                let body = try requestJSON(request)
+                if request.httpMethod == "PUT" {
+                    XCTAssertEqual(request.url!.path, "/cinema/api/jobs/job1/entries/entry1/match")
+                    XCTAssertEqual(body["tmdb_id"] as? Int, 42)
+                    XCTAssertEqual(body["kind"] as? String, "tv")
+                    XCTAssertEqual(body["season"] as? Int, 0)
+                    XCTAssertEqual(body["episode"] as? Int, 3)
+                } else {
+                    XCTAssertEqual(request.url!.path, "/cinema/api/jobs/job1/execute")
+                    XCTAssertEqual(request.httpMethod, "POST")
+                    XCTAssertEqual(body["entries"] as? [String], ["entry1"])
+                }
+                return (200, [:], Self.correctionJobData(status: request.httpMethod == "PUT" ? "preview" : "queued"))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let original = try APIClient.decoder.decode(Job.self, from: Self.correctionJobData(status: "partial"))
+        let entry = try XCTUnwrap(original.entries?.first)
+        let preview = try await api.correctJobEntry(entry, in: original, body: JobCorrectionBody(
+            kind: .tv, tmdbID: 42, season: 0, episode: 3
+        ))
+        XCTAssertEqual(preview.status, "preview")
+        XCTAssertEqual(requests.all.count, 1, "Saving a correction must never execute or transfer automatically.")
+        let started = try await api.executeJobEntries([entry.id], in: preview)
+        XCTAssertTrue(started.isActive)
+        XCTAssertEqual(requests.all.count, 2)
+    }
+
+    func testCorrectionAndExecutionRejectUnsafeRequestsBeforeNetworking() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                XCTFail("Invalid operations must not issue a request.")
+                return (200, [:], Self.correctionJobData(status: "preview"))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let running = try APIClient.decoder.decode(Job.self, from: Self.correctionJobData(status: "executing"))
+        let entry = try XCTUnwrap(running.entries?.first)
+        do {
+            _ = try await api.correctJobEntry(entry, in: running, body: JobCorrectionBody(kind: .movie, tmdbID: 42))
+            XCTFail("Running tasks cannot be corrected.")
+        } catch { guard case APIError.validation = error else { return XCTFail("Expected validation error") } }
+        let preview = try APIClient.decoder.decode(Job.self, from: Self.correctionJobData(status: "preview"))
+        do {
+            _ = try await api.correctJobEntry(entry, in: preview, body: JobCorrectionBody(kind: .movie, tmdbID: 0))
+            XCTFail("TMDB ID must be positive.")
+        } catch { guard case APIError.validation = error else { return XCTFail("Expected validation error") } }
+        for ids in [[], ["missing"], ["entry1", "entry1"]] as [[String]] {
+            do {
+                _ = try await api.executeJobEntries(ids, in: preview)
+                XCTFail("Unsafe selections must be rejected.")
+            } catch { guard case APIError.validation = error else { return XCTFail("Expected validation error") } }
+        }
+        XCTAssertTrue(requests.all.isEmpty)
+    }
+
+    func testCorrectionFailuresAreReportedWithoutRetryOrExecution() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                return (409, [:], Data(#"{"error":"目标路径冲突"}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let job = try APIClient.decoder.decode(Job.self, from: Self.correctionJobData(status: "preview"))
+        do {
+            _ = try await api.correctJobEntry(try XCTUnwrap(job.entries?.first), in: job, body: JobCorrectionBody(kind: .movie, tmdbID: 42))
+            XCTFail("Conflicts must be reported.")
+        } catch { XCTAssertEqual(error.localizedDescription, "目标路径冲突") }
+        XCTAssertEqual(requests.all.count, 1)
+        XCTAssertEqual(requests.all.first?.httpMethod, "PUT")
+    }
+
+    private nonisolated static func correctionJobData(status: String) -> Data {
+        Data("""
+        {"id":"job1","rule":{"name":"订阅转存","mode":"organize"},"status":"\(status)",
+        "resource_key":"share:example","created_at":"2026-10-19T00:00:00Z","updated_at":"2026-10-19T00:00:00Z",
+        "scanned":1,"processed":0,"message":"","entries":[{"id":"entry1","source":"/incoming/Example.mkv",
+        "destination":"/library/Example.mkv","status":"ready","message":"","size":1024,"moved":false,
+        "identity":{"kind":"tv","tmdb_id":42,"season":0,"episode":3},"media":{"id":42,"kind":"tv","title":"Example"}}]}
+        """.utf8)
+    }
+
     func testPostersCoalesceConcurrentRequestsAndReuseNormalizedTMDBPaths() async throws {
         let requests = RecordedRequests()
         let imageData = UIGraphicsImageRenderer(size: CGSize(width: 800, height: 1200)).pngData { context in

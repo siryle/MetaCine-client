@@ -67,6 +67,10 @@ struct HistoryView: View {
                                     if !job.message.isEmpty {
                                         Text(job.message).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                                     }
+                                    if job.canReviewMatches {
+                                        Label("可在文件明细中校正匹配", systemImage: "pencil.circle")
+                                            .font(.caption).foregroundStyle(CineTheme.accent)
+                                    }
                                     HStack {
                                         Text("已处理 \(job.processed) / \(job.scanned)")
                                         Spacer()

@@ -43,7 +43,7 @@ struct ResourceSearchView: View {
             .sheet(item: $draft) { value in
                 NavigationStack { SubscriptionEditor(draft: value, isPresentedModally: true) }
             }
-            .sheet(item: $openedJob) { job in NavigationStack { JobDetailView(jobID: job.id) } }
+            .sheet(item: $openedJob) { job in NavigationStack { JobDetailView(jobID: job.id, isPresentedModally: true) } }
             .cineNotice($notice)
     }
 
