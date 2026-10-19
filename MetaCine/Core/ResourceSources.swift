@@ -1,18 +1,22 @@
 import Foundation
 
 enum ResourceSource: String, Codable, CaseIterable, Identifiable {
-    case all, re0, telegram
+    case all, re0, telegram, hdhaven, jying
     var id: String { rawValue }
     var title: String {
         switch self {
         case .all: "全部来源"
         case .re0: "RE0"
         case .telegram: "Telegram"
+        case .hdhaven: "HDHaven"
+        case .jying: "jying"
         }
     }
-    var supportsUnlock: Bool { self == .re0 }
-    var usesUnlockPoints: Bool { self != .telegram }
-    static let providers: [Self] = [.re0, .telegram]
+    var supportsUnlock: Bool { self == .re0 || self == .hdhaven || self == .jying }
+    var usesUnlockPoints: Bool { self == .all || self == .re0 || self == .hdhaven }
+    var usesRE0DefaultPoints: Bool { self == .all || self == .re0 }
+    var requiresTMDBID: Bool { self == .re0 || self == .hdhaven }
+    static let providers: [Self] = allCases.filter { $0 != .all }
 }
 
 struct ResourceMediaHint: Encodable {
@@ -65,13 +69,25 @@ struct ResourceUnlockBody: Encodable {
         guard result.needsUnlock, let slug = result.slug, !slug.isEmpty else {
             throw APIError.validation("\(result.resourceSource.title) 资源缺少有效标识或已获取链接。")
         }
+        self.slug = slug
+        if result.resourceSource == .jying {
+            guard result.details?["accessible"] != "false" else {
+                throw APIError.validation("此资源暂不可获取链接，请在 jying 站内核对访问权限。")
+            }
+            allowPaid = false
+            maxPoints = 0
+            return
+        }
         guard result.unlocked == true || (result.unlockPoints.map { (0...10000).contains($0) } ?? false) else {
             throw APIError.validation("资源积分未知或超过上限，请在 \(result.resourceSource.title) 核对后重试。")
         }
-        self.slug = slug
         allowPaid = result.unlocked != true && (result.unlockPoints ?? 0) > 0
         maxPoints = result.unlocked == true ? 0 : result.unlockPoints ?? 0
     }
+}
+
+private struct ResourceAccessBody: Encodable {
+    let slug: String
 }
 
 struct ResourceUnlockResponse: Decodable {
@@ -94,7 +110,7 @@ extension APIClient {
         var value = try draft.validated()
         if value.maxPoints == nil {
             // PUT does not inherit defaults; existing subscriptions must keep their saved limit.
-            if value.id == nil && value.source.usesUnlockPoints {
+            if value.id == nil && value.source.usesRE0DefaultPoints {
                 value.maxPoints = try await defaultUnlockPoints()
             } else {
                 value.maxPoints = 0
@@ -113,18 +129,22 @@ extension APIClient {
             throw APIError.validation("请输入 1–200 字节的搜索关键词。")
         }
         guard ResourceSource.providers.contains(source) else {
-            throw APIError.validation("请分别查询 RE0 或 Telegram 资源。")
+            throw APIError.validation("请选择单个资源来源分别查询。")
         }
         let hint = media.flatMap { $0.matchesQuery(query) ? $0 : nil }
         return try await send("POST", "api/resources/search", body: ResourceSearchBody(
-            query: query, source: source, media: source.supportsUnlock ? hint : nil
+            query: query, source: source, media: source == .telegram ? nil : hint
         ))
     }
 
     func unlockResource(_ result: ResourceResult) async throws -> ResourceResult {
-        let response: ResourceUnlockResponse = try await send(
-            "POST", "api/re0/resources/unlock", body: ResourceUnlockBody(result)
-        )
+        let body = try ResourceUnlockBody(result)
+        let response: ResourceUnlockResponse
+        if result.resourceSource == .jying {
+            response = try await send("POST", "api/jying/resources/access", body: ResourceAccessBody(slug: body.slug))
+        } else {
+            response = try await send("POST", "api/\(result.resourceSource.rawValue)/resources/unlock", body: body)
+        }
         guard !response.text.isEmpty, response.type == result.type else { throw APIError.invalidResponse }
         var unlocked = result
         unlocked.shareURL = response.text

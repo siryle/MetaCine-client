@@ -405,7 +405,7 @@ final class APIClientTests: XCTestCase {
         }
     }
 
-    func testTelegramSubscriptionDoesNotRequireRE0Configuration() async throws {
+    func testIndependentSubscriptionsDefaultToFreeWithoutRE0Configuration() async throws {
         let requests = RecordedRequests()
         StubURLProtocol.lock.withLock {
             StubURLProtocol.handler = { request in
@@ -416,10 +416,37 @@ final class APIClientTests: XCTestCase {
         }
         let api = try client()
         defer { api.invalidate() }
-        let saved = try await api.saveSubscription(SubscriptionDraft(title: "Example", source: .telegram))
-        XCTAssertEqual(saved.maxPoints, 0)
-        XCTAssertEqual(saved.resourceSource, .telegram)
-        XCTAssertEqual(requests.all.count, 1)
+        for source in [ResourceSource.telegram, .hdhaven, .jying] {
+            let saved = try await api.saveSubscription(SubscriptionDraft(title: "Example", tmdbID: 42, source: source))
+            XCTAssertEqual(saved.maxPoints, 0)
+            XCTAssertEqual(saved.resourceSource, source)
+        }
+        XCTAssertEqual(requests.all.count, 3)
+        XCTAssertTrue(requests.all.allSatisfy { $0.url!.path.hasSuffix("/resources/subscriptions") })
+    }
+
+    func testHDHavenSubscriptionPreservesExplicitPaidLimitAndEdits() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                XCTAssertTrue(request.url!.path.contains("/subscriptions"))
+                return (200, [:], try savedSubscription(requestJSON(request)))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let saved = try await api.saveSubscription(SubscriptionDraft(
+            title: "Example", tmdbID: 42, source: .hdhaven, maxPoints: 6
+        ))
+        var draft = saved.draft
+        draft.enabled = false
+        let edited = try await api.saveSubscription(draft)
+        XCTAssertEqual(edited.resourceSource, .hdhaven)
+        XCTAssertEqual(edited.maxPoints, 6)
+        XCTAssertEqual(edited.autoUnlock, true)
+        XCTAssertFalse(edited.enabled)
+        XCTAssertEqual(requests.all.map(\.httpMethod), ["POST", "PUT"])
     }
 
     func testResourceSearchUsesAllProvidersAndKeepsFailuresIndependent() async throws {
@@ -433,8 +460,12 @@ final class APIClientTests: XCTestCase {
                     XCTAssertEqual((body["media"] as? [String: Any])?["tmdb_id"] as? Int, 42)
                     return (503, [:], Data(#"{"error":"RE0 unavailable"}"#.utf8))
                 }
-                XCTAssertEqual(body["source"] as? String, "telegram")
-                XCTAssertNil(body["media"])
+                if body["source"] as? String == "telegram" {
+                    XCTAssertNil(body["media"])
+                } else {
+                    XCTAssertTrue(["hdhaven", "jying"].contains(body["source"] as? String ?? ""))
+                    XCTAssertEqual((body["media"] as? [String: Any])?["tmdb_id"] as? Int, 42)
+                }
                 return (200, [:], Data(#"{"results":[],"warnings":["Channel unavailable"]}"#.utf8))
             }
         }
@@ -447,13 +478,17 @@ final class APIClientTests: XCTestCase {
         } catch { XCTAssertEqual(error.localizedDescription, "RE0 unavailable") }
         let telegram = try await api.searchResources(" Example ", source: .telegram, media: hint)
         XCTAssertEqual(telegram.warnings, ["Channel unavailable"])
+        for source in [ResourceSource.hdhaven, .jying] {
+            let response = try await api.searchResources(" Example ", source: source, media: hint)
+            XCTAssertEqual(response.results?.count, 0)
+        }
         do {
             _ = try await api.searchResources("Example", source: .all)
             XCTFail("Providers must be searched independently.")
         } catch { }
-        XCTAssertEqual(Set(ResourceSource.providers), [.re0, .telegram])
-        XCTAssertEqual(ResourceSource.allCases, [.all, .re0, .telegram])
-        XCTAssertEqual(requests.all.count, 2)
+        XCTAssertEqual(ResourceSource.providers, [.re0, .telegram, .hdhaven, .jying])
+        XCTAssertEqual(ResourceSource.allCases, [.all, .re0, .telegram, .hdhaven, .jying])
+        XCTAssertEqual(requests.all.count, 4)
     }
 
     func testRE0CanResolveNativeTitlesWithoutTMDBIdentity() async throws {
@@ -487,10 +522,12 @@ final class APIClientTests: XCTestCase {
         let api = try client()
         defer { api.invalidate() }
         let hint = ResourceMediaHint(SubscriptionDraft(title: "Example", tmdbID: 42))
-        _ = try await api.searchResources("Another", source: .re0, media: hint)
+        for source in ResourceSource.providers {
+            _ = try await api.searchResources("Another", source: source, media: hint)
+        }
     }
 
-    func testTitleOnlySearchReachesRE0WithoutMediaHint() async throws {
+    func testTitleOnlySearchReachesAllProvidersWithoutMediaHint() async throws {
         let requests = RecordedRequests()
         StubURLProtocol.lock.withLock {
             StubURLProtocol.handler = { request in
@@ -502,8 +539,10 @@ final class APIClientTests: XCTestCase {
         }
         let api = try client()
         defer { api.invalidate() }
-        _ = try await api.searchResources("Example", source: .re0)
-        XCTAssertEqual(requests.all.count, 1)
+        for source in ResourceSource.providers {
+            _ = try await api.searchResources("Example", source: source)
+        }
+        XCTAssertEqual(requests.all.count, 4)
     }
 
     func testRE0UnlockOnlyObtainsLinkAndNeverSubmitsTransfer() async throws {
@@ -532,6 +571,69 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(unlocked.shareURL, "https://115.com/s/example?password=abc1")
         XCTAssertTrue(unlocked.unlocked == true)
         XCTAssertEqual(requests.all.count, 1)
+    }
+
+    func testNewProviderLinkAccessUsesDedicatedEndpointsWithoutTransfer() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                XCTAssertEqual(request.httpMethod, "POST")
+                let body = try requestJSON(request)
+                switch request.url!.path {
+                case "/cinema/api/hdhaven/resources/unlock":
+                    XCTAssertEqual(body["slug"] as? String, "0123456789abcdef0123456789abcdef")
+                    XCTAssertEqual(body["allow_paid"] as? Bool, true)
+                    XCTAssertEqual(body["max_points"] as? Int, 4)
+                case "/cinema/api/jying/resources/access":
+                    XCTAssertEqual(body["slug"] as? String, "123/456")
+                    XCTAssertEqual(Set(body.keys), ["slug"])
+                default:
+                    XCTFail("Link access must never submit a transfer or use another provider's endpoint.")
+                }
+                return (200, [:], Data(#"{"text":"https://115.com/s/example?password=abc1","type":"share"}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        for source in [ResourceSource.hdhaven, .jying] {
+            let slug = source == .jying ? "123/456" : "0123456789abcdef0123456789abcdef"
+            let result = try APIClient.decoder.decode(ResourceResult.self, from: Data("""
+            {"source":"\(source.rawValue)","slug":"\(slug)","unlock_points":4,
+            "title":"Example","channel":"\(source.title)","post_url":"https://example.test/resource",
+            "share_url":"","type":"share","details":{"accessible":"true"}}
+            """.utf8))
+            let unlocked = try await api.unlockResource(result)
+            XCTAssertEqual(unlocked.id, result.id)
+            XCTAssertEqual(unlocked.shareURL, "https://115.com/s/example?password=abc1")
+            XCTAssertFalse(unlocked.needsUnlock)
+        }
+        XCTAssertEqual(requests.all.count, 2)
+    }
+
+    func testNewProviderLinkFailuresAreNotRetried() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                return (503, [:], Data(#"{"error":"Provider unavailable"}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        for source in [ResourceSource.hdhaven, .jying] {
+            let slug = source == .jying ? "123/456" : "0123456789abcdef0123456789abcdef"
+            let result = try APIClient.decoder.decode(ResourceResult.self, from: Data("""
+            {"source":"\(source.rawValue)","slug":"\(slug)","unlock_points":0,
+            "title":"Example","channel":"provider","post_url":"https://example.test/resource",
+            "share_url":"","type":"share"}
+            """.utf8))
+            do {
+                _ = try await api.unlockResource(result)
+                XCTFail("Provider failure must be reported without retrying.")
+            } catch { XCTAssertEqual(error.localizedDescription, "Provider unavailable") }
+        }
+        XCTAssertEqual(requests.all.count, 2)
     }
 
     func testPostersCoalesceConcurrentRequestsAndReuseNormalizedTMDBPaths() async throws {

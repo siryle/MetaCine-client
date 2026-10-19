@@ -32,10 +32,11 @@ struct SubscriptionEditor: View {
                     }
                     .disabled(loadingDefaults)
                     .onChange(of: draft.source) { _, _ in
+                        defaultsError = nil
                         if draft.id == nil { draft.maxPoints = nil }
                     }
                     if draft.source.usesUnlockPoints {
-                        Toggle("允许 RE0 自动付费解锁", isOn: $draft.autoUnlock)
+                        Toggle("允许 API 自动付费解锁", isOn: $draft.autoUnlock)
                         if loadingDefaults { ProgressView("正在读取 RE0 账号积分上限…") }
                         if let defaultsError {
                             ErrorBanner(message: defaultsError) { Task { await loadDefaults() } }
@@ -46,11 +47,11 @@ struct SubscriptionEditor: View {
                                 set: { draft.maxPoints = $0 }
                             ))
                         }
-                        Button("恢复 RE0 账号默认上限") { Task { await loadDefaults() } }
+                        Button(draft.source.usesRE0DefaultPoints ? "恢复 RE0 账号默认上限" : "恢复免费资源上限") { Task { await loadDefaults() } }
                             .disabled(loadingDefaults || saving)
                     }
                 } header: { Text("搜索来源") } footer: {
-                    Text("新订阅读取 RE0 账号设置的积分上限。全部来源检查 RE0 和 Telegram；RE0 专属订阅需要准确的 TMDB ID。上限为 0 或关闭自动付费解锁时，仅处理免费或已解锁资源。")
+                    Text("全部来源依次检查 Telegram、RE0、HDHaven 和 jying。全部来源和 RE0 新订阅读取 RE0 账号积分上限；HDHaven 独立订阅默认上限为 0，可手动调整。RE0 和 HDHaven 专属订阅需要准确的 TMDB ID。积分上限和付费许可适用于 RE0、HDHaven；上限为 0 或关闭自动付费解锁时，仅处理免费或已解锁资源。")
                 }
                 Section {
                     Picker("资源类型", selection: $draft.resourceType) {
@@ -92,6 +93,11 @@ struct SubscriptionEditor: View {
 
     @MainActor private func loadDefaults() async {
         guard !loadingDefaults else { return }
+        guard draft.source.usesRE0DefaultPoints else {
+            draft.maxPoints = 0
+            defaultsError = nil
+            return
+        }
         loadingDefaults = true
         defaultsError = nil
         defer { loadingDefaults = false }

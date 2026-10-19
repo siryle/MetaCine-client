@@ -106,7 +106,7 @@ final class ModelContractTests: XCTestCase {
     }
 
     func testSubscriptionEditsAndPausePreserveSourceAndUnlockLimit() async throws {
-        for source in ["all", "re0", "telegram"] {
+        for source in ResourceSource.allCases.map(\.rawValue) {
             let sub = try APIClient.decoder.decode(ResourceSubscription.self, from: Data("""
             {"id":"sub1","title":"Example","kind":"tv","tmdb_id":42,"resource_type":"any",
             "source":"\(source)","auto_unlock":true,"max_points":8,
@@ -135,51 +135,101 @@ final class ModelContractTests: XCTestCase {
         XCTAssertEqual(sub.draft.maxPoints, 0)
     }
 
-    func testRE0SubscriptionRequiresTMDBIdentityAndValidPointLimit() async throws {
-        var draft = SubscriptionDraft(title: "Example", source: .re0)
-        XCTAssertThrowsError(try draft.validated())
-        draft.tmdbID = 42
-        for points in [-1, 10001] {
-            draft.maxPoints = points
+    func testAPISubscriptionsRequireTMDBIdentityAndValidPointLimit() async throws {
+        for source in [ResourceSource.re0, .hdhaven] {
+            var draft = SubscriptionDraft(title: "Example", source: source)
             XCTAssertThrowsError(try draft.validated())
+            draft.tmdbID = 42
+            for points in [-1, 10001] {
+                draft.maxPoints = points
+                XCTAssertThrowsError(try draft.validated())
+            }
+            for points in [0, 3, 10000] {
+                draft.maxPoints = points
+                XCTAssertEqual(try draft.validated().maxPoints, points)
+            }
         }
-        for points in [0, 3, 10000] {
-            draft.maxPoints = points
-            XCTAssertEqual(try draft.validated().maxPoints, points)
+        for source in [ResourceSource.all, .telegram, .jying] {
+            XCTAssertNoThrow(try SubscriptionDraft(title: "Example", source: source).validated())
         }
-        draft.source = .all
-        draft.tmdbID = 0
-        XCTAssertNoThrow(try draft.validated())
     }
 
-    func testLockedRE0ResourceIdentitySurvivesUnlockAndPreservesCost() async throws {
-        var result = try re0Result(points: 3)
-        XCTAssertEqual(result.resourceSource, .re0)
+    func testLockedAPIResourceIdentitySurvivesUnlockAndPreservesCost() async throws {
+        for source in [ResourceSource.re0, .hdhaven] {
+            var result = try re0Result(points: 3, source: source)
+            XCTAssertEqual(result.resourceSource, source)
+            XCTAssertTrue(result.needsUnlock)
+            XCTAssertEqual(result.link, result.postURL)
+            XCTAssertEqual(result.unlockStatus, "3 积分")
+            let id = result.id
+            let body = try ResourceUnlockBody(result)
+            XCTAssertEqual(body.maxPoints, 3)
+            XCTAssertTrue(body.allowPaid)
+            result.shareURL = "https://115.com/s/example?password=abc1"
+            result.unlocked = true
+            XCTAssertEqual(result.id, id)
+            XCTAssertFalse(result.needsUnlock)
+            XCTAssertEqual(result.link, result.shareURL)
+            XCTAssertThrowsError(try ResourceUnlockBody(result))
+        }
+    }
+
+    func testUnlockRejectsUnknownAndInvalidCostsButAllowsOwnedResources() async throws {
+        for source in [ResourceSource.re0, .hdhaven] {
+            for points in [nil, -1, 10001] as [Int?] {
+                XCTAssertThrowsError(try ResourceUnlockBody(re0Result(points: points, source: source)))
+            }
+            let owned = try ResourceUnlockBody(re0Result(points: nil, unlocked: true, source: source))
+            XCTAssertFalse(owned.allowPaid)
+            XCTAssertEqual(owned.maxPoints, 0)
+            let free = try ResourceUnlockBody(re0Result(points: 0, source: source))
+            XCTAssertFalse(free.allowPaid)
+            XCTAssertEqual(free.maxPoints, 0)
+        }
+    }
+
+    func testJyingLinkAccessDoesNotRequirePointsAndKeepsStableIdentity() async throws {
+        var result = try re0Result(points: nil, source: .jying)
         XCTAssertTrue(result.needsUnlock)
-        XCTAssertEqual(result.link, result.postURL)
-        XCTAssertEqual(result.unlockStatus, "3 积分")
-        let id = result.id
+        XCTAssertEqual(result.unlockStatus, "待获取链接")
         let body = try ResourceUnlockBody(result)
-        XCTAssertEqual(body.maxPoints, 3)
-        XCTAssertTrue(body.allowPaid)
+        XCTAssertFalse(body.allowPaid)
+        XCTAssertEqual(body.maxPoints, 0)
+        let id = result.id
         result.shareURL = "https://115.com/s/example?password=abc1"
         result.unlocked = true
         XCTAssertEqual(result.id, id)
         XCTAssertFalse(result.needsUnlock)
-        XCTAssertEqual(result.link, result.shareURL)
+        XCTAssertEqual(result.unlockStatus, "链接已获取")
         XCTAssertThrowsError(try ResourceUnlockBody(result))
+
+        let inaccessible = try APIClient.decoder.decode(ResourceResult.self, from: Data("""
+        {"source":"jying","slug":"1/2","title":"Example","channel":"jying",
+        "post_url":"https://www.jying.top/movie/1","share_url":"","type":"share",
+        "details":{"accessible":"false"}}
+        """.utf8))
+        XCTAssertEqual(inaccessible.unlockStatus, "暂无访问权限")
+        XCTAssertThrowsError(try ResourceUnlockBody(inaccessible))
     }
 
-    func testUnlockRejectsUnknownAndInvalidCostsButAllowsOwnedResources() async throws {
-        for points in [nil, -1, 10001] as [Int?] {
-            XCTAssertThrowsError(try ResourceUnlockBody(re0Result(points: points)))
+    func testJyingAggregateLinksRemainDistinctAndReadyToTransfer() async throws {
+        let response = try APIClient.decoder.decode(SearchResponse.self, from: Data("""
+        {"results":[
+        {"source":"jying","title":"Example","channel":"jying · gying",
+        "post_url":"https://www.jying.top","share_url":"https://115.com/s/one?password=abc1","type":"share"},
+        {"source":"jying","title":"Example","channel":"jying · gying",
+        "post_url":"https://www.jying.top","share_url":"magnet:?xt=urn:btih:example","type":"magnet"}]}
+        """.utf8))
+        let results = try XCTUnwrap(response.results)
+        XCTAssertEqual(Set(results.map(\.id)).count, 2)
+        XCTAssertTrue(results.allSatisfy { $0.resourceSource == .jying && !$0.needsUnlock })
+    }
+
+    func testProviderResourceIdentitiesDoNotCollide() async throws {
+        let ids = try [ResourceSource.re0, .hdhaven, .jying].map {
+            try re0Result(points: 0, source: $0).id
         }
-        let owned = try ResourceUnlockBody(re0Result(points: nil, unlocked: true))
-        XCTAssertFalse(owned.allowPaid)
-        XCTAssertEqual(owned.maxPoints, 0)
-        let free = try ResourceUnlockBody(re0Result(points: 0))
-        XCTAssertFalse(free.allowPaid)
-        XCTAssertEqual(free.maxPoints, 0)
+        XCTAssertEqual(Set(ids).count, 3)
     }
 
     func testResourceMediaHintRejectsWrongTMDBKindYearAndSeason() async throws {
@@ -197,10 +247,11 @@ final class ModelContractTests: XCTestCase {
     }
 
     private func re0Result(
-        points: Int?, unlocked: Bool = false, tmdbID: Int = 42, kind: String = "tv", season: Int = 2
+        points: Int?, unlocked: Bool = false, tmdbID: Int = 42, kind: String = "tv", season: Int = 2,
+        source: ResourceSource = .re0
     ) throws -> ResourceResult {
         var object: [String: Any] = [
-            "source": "re0", "slug": "0123456789abcdef0123456789abcdef", "unlocked": unlocked,
+            "source": source.rawValue, "slug": "0123456789abcdef0123456789abcdef", "unlocked": unlocked,
             "title": "Example (2026)", "channel": "RE0", "type": "share", "share_url": "",
             "post_url": "https://re0.me/resource/example", "tmdb_id": tmdbID, "kind": kind, "season": season
         ]

@@ -223,6 +223,10 @@ struct ResourceResult: Decodable, Identifiable {
     var needsUnlock: Bool { resourceSource.supportsUnlock && shareURL.isEmpty }
     var link: String { shareURL.isEmpty ? postURL : shareURL }
     var unlockStatus: String {
+        if resourceSource == .jying {
+            if !shareURL.isEmpty { return "链接已获取" }
+            return details?["accessible"] == "false" ? "暂无访问权限" : "待获取链接"
+        }
         if unlocked == true { return "已解锁" }
         if let unlockPoints, unlockPoints >= 0 { return "\(unlockPoints) 积分" }
         return "积分未知"
@@ -338,7 +342,7 @@ struct SubscriptionDraft: Encodable, Identifiable {
         guard (30...10080).contains(intervalMinutes), value.quality.utf8.count <= 100 else {
             throw APIError.validation("检查间隔须为 30–10080 分钟，版本关键词最多 100 字节。")
         }
-        if source.supportsUnlock, tmdbID <= 0 {
+        if source.requiresTMDBID, tmdbID <= 0 {
             throw APIError.validation("\(source.title) 订阅需要准确的 TMDB ID，请从匹配的作品详情订阅或填写 ID。")
         }
         if let maxPoints, !(0...10000).contains(maxPoints) {

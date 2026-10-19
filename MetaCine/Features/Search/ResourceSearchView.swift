@@ -73,7 +73,13 @@ struct ResourceSearchView: View {
                 Button("确认获取链接") { Task { await performUnlock(result) } }
                 Button("取消", role: .cancel) {}
             } message: { result in
-                Text(result.unlocked == true ? "资源已解锁，确认获取链接？" : "预计消耗 \(result.unlockPoints ?? 0) 积分，服务端会在解锁前核对积分上限。")
+                if result.resourceSource == .jying {
+                    Text("确认通过 jying 获取此资源的下载链接？")
+                } else if result.unlocked == true {
+                    Text("资源已解锁，确认获取链接？")
+                } else {
+                    Text("预计消耗 \(result.unlockPoints ?? 0) 积分，服务端会在解锁前核对积分上限。")
+                }
             }
     }
 
@@ -148,11 +154,13 @@ struct ResourceSearchView: View {
     }
 
     private var sourcePicker: some View {
-        Picker("资源来源", selection: $sourceFilter) {
-            ForEach(ResourceSource.allCases) { source in
-                Text("\(source.title) \(resultCount(for: source))").tag(source)
-            }
-        }.pickerStyle(.segmented)
+        ScrollView(.horizontal, showsIndicators: false) {
+            Picker("资源来源", selection: $sourceFilter) {
+                ForEach(ResourceSource.allCases) { source in
+                    Text("\(source.title) \(resultCount(for: source))").tag(source)
+                }
+            }.pickerStyle(.segmented).fixedSize(horizontal: true, vertical: false)
+        }
     }
 
     private func resultCount(for source: ResourceSource) -> Int {
@@ -173,7 +181,7 @@ struct ResourceSearchView: View {
                 ContentUnavailableView {
                     Label("好资源，从这里找到", systemImage: "sparkle.magnifyingglass")
                 } description: {
-                    Text("同时搜索 RE0 和 Telegram，支持 115、磁力和电驴资源。")
+                    Text("同时搜索 RE0、Telegram、HDHaven 和 jying，支持 115、磁力和电驴资源。")
                 }
             } else {
                 Text("“\(submittedQuery)” · \(results.count) 个资源\(loading ? " · 搜索中…" : "")")
@@ -198,7 +206,7 @@ struct ResourceSearchView: View {
                 Text("此来源暂无匹配资源。").font(.subheadline).foregroundStyle(.secondary)
             }
             ForEach(Array(Set(group.results.map(\.channel))).sorted(), id: \.self) { channel in
-                if group.source == .telegram {
+                if group.source == .telegram || group.source == .jying {
                     Text(channel).font(.subheadline.weight(.semibold)).foregroundStyle(.secondary)
                 }
                 ForEach(group.results.filter { $0.channel == channel }) { resourceCard($0) }
@@ -257,7 +265,7 @@ struct ResourceSearchView: View {
                 VStack(alignment: .leading, spacing: 8) {
                     Text(result.rawText ?? result.title).textSelection(.enabled)
                     if let url = URL(string: result.postURL) {
-                        Link(result.resourceSource.supportsUnlock ? "查看 \(result.resourceSource.title) 资源" : "查看频道消息", destination: url)
+                        Link(result.resourceSource == .telegram ? "查看频道消息" : "查看 \(result.resourceSource.title) 资源", destination: url)
                     }
                 }
                     .font(.caption).foregroundStyle(.secondary).padding(12)
