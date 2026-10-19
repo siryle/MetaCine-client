@@ -386,22 +386,26 @@ final class APIClientTests: XCTestCase {
     }
 
     func testFailedOrInvalidAccountDefaultNeverCreatesSubscription() async throws {
-        for (status, response) in [(500, #"{"error":"RE0 settings unavailable"}"#), (200, #"{"max_points":10001}"#)] {
-            let requests = RecordedRequests()
-            StubURLProtocol.lock.withLock {
-                StubURLProtocol.handler = { request in
-                    requests.append(request)
-                    return (status, [:], Data(response.utf8))
+        for source in [ResourceSource.all, .re0, .hdhaven] {
+            let provider = source == .hdhaven ? "hdhaven" : "re0"
+            for (status, response) in [(500, #"{"error":"Settings unavailable"}"#), (200, #"{"max_points":-1}"#),
+                                       (200, #"{"max_points":10001}"#), (200, #"{"max_points":null}"#)] {
+                let requests = RecordedRequests()
+                StubURLProtocol.lock.withLock {
+                    StubURLProtocol.handler = { request in
+                        requests.append(request)
+                        return (status, [:], Data(response.utf8))
+                    }
                 }
+                let api = try client()
+                do {
+                    _ = try await api.saveSubscription(SubscriptionDraft(title: "Example", tmdbID: 42, source: source))
+                    XCTFail("A missing account limit must not silently allow spending or save a zero limit.")
+                } catch {
+                    XCTAssertEqual(requests.all.map { $0.url!.path }, ["/cinema/api/\(provider)/unlock/config"])
+                }
+                api.invalidate()
             }
-            let api = try client()
-            do {
-                _ = try await api.saveSubscription(SubscriptionDraft(title: "Example"))
-                XCTFail("A missing account limit must not silently allow spending or save a zero limit.")
-            } catch {
-                XCTAssertEqual(requests.all.map { $0.url!.path }, ["/cinema/api/re0/unlock/config"])
-            }
-            api.invalidate()
         }
     }
 
@@ -416,13 +420,63 @@ final class APIClientTests: XCTestCase {
         }
         let api = try client()
         defer { api.invalidate() }
-        for source in [ResourceSource.telegram, .hdhaven, .jying] {
+        for source in [ResourceSource.telegram, .jying] {
             let saved = try await api.saveSubscription(SubscriptionDraft(title: "Example", tmdbID: 42, source: source))
             XCTAssertEqual(saved.maxPoints, 0)
             XCTAssertEqual(saved.resourceSource, source)
         }
-        XCTAssertEqual(requests.all.count, 3)
+        XCTAssertEqual(requests.all.count, 2)
         XCTAssertTrue(requests.all.allSatisfy { $0.url!.path.hasSuffix("/resources/subscriptions") })
+    }
+
+    func testHDHavenSubscriptionReadsCurrentServerLimitWithoutRE0Configuration() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                if request.url!.path == "/cinema/api/hdhaven/unlock/config" {
+                    let reads = requests.all.filter { $0.httpMethod == "GET" }.count
+                    return (200, [:], Data("{\"max_points\":\(reads == 1 ? 6 : 9)}".utf8))
+                }
+                XCTAssertEqual(request.url!.path, "/cinema/api/resources/subscriptions")
+                XCTAssertEqual(request.httpMethod, "POST")
+                let body = try requestJSON(request)
+                XCTAssertEqual(body["source"] as? String, "hdhaven")
+                XCTAssertEqual(body["auto_unlock"] as? Bool, true)
+                return (200, [:], try savedSubscription(body))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        for points in [6, 9] {
+            let saved = try await api.saveSubscription(SubscriptionDraft(title: "Example", tmdbID: 42, source: .hdhaven))
+            XCTAssertEqual(saved.maxPoints, points)
+            XCTAssertEqual(saved.resourceSource, .hdhaven)
+        }
+        XCTAssertEqual(requests.all.map { $0.url!.path }, [
+            "/cinema/api/hdhaven/unlock/config", "/cinema/api/resources/subscriptions",
+            "/cinema/api/hdhaven/unlock/config", "/cinema/api/resources/subscriptions"
+        ])
+    }
+
+    func testUnlockDefaultsRouteBySourceAndDoNotRequestSettingsForDirectLinks() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                let points = request.url!.path.contains("/hdhaven/") ? 5 : 3
+                return (200, [:], Data("{\"max_points\":\(points)}".utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        for source in ResourceSource.allCases {
+            let points = try await api.defaultUnlockPoints(for: source)
+            XCTAssertEqual(points, source == .hdhaven ? 5 : source.usesUnlockPoints ? 3 : 0)
+        }
+        XCTAssertEqual(requests.all.map { $0.url!.path }, [
+            "/cinema/api/re0/unlock/config", "/cinema/api/re0/unlock/config", "/cinema/api/hdhaven/unlock/config"
+        ])
     }
 
     func testHDHavenSubscriptionPreservesExplicitPaidLimitAndEdits() async throws {

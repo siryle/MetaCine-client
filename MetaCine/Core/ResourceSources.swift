@@ -14,7 +14,13 @@ enum ResourceSource: String, Codable, CaseIterable, Identifiable {
     }
     var supportsUnlock: Bool { self == .re0 || self == .hdhaven || self == .jying }
     var usesUnlockPoints: Bool { self == .all || self == .re0 || self == .hdhaven }
-    var usesRE0DefaultPoints: Bool { self == .all || self == .re0 }
+    var unlockSettingsSource: Self? {
+        switch self {
+        case .all, .re0: .re0
+        case .hdhaven: .hdhaven
+        case .telegram, .jying: nil
+        }
+    }
     var requiresTMDBID: Bool { self == .re0 || self == .hdhaven }
     static let providers: [Self] = allCases.filter { $0 != .all }
 }
@@ -100,8 +106,9 @@ struct ResourceUnlockConfig: Decodable {
 }
 
 extension APIClient {
-    func defaultUnlockPoints() async throws -> Int {
-        let config: ResourceUnlockConfig = try await get("api/re0/unlock/config")
+    func defaultUnlockPoints(for source: ResourceSource) async throws -> Int {
+        guard let provider = source.unlockSettingsSource else { return 0 }
+        let config: ResourceUnlockConfig = try await get("api/\(provider.rawValue)/unlock/config")
         guard (0...10000).contains(config.maxPoints) else { throw APIError.invalidResponse }
         return config.maxPoints
     }
@@ -110,8 +117,8 @@ extension APIClient {
         var value = try draft.validated()
         if value.maxPoints == nil {
             // PUT does not inherit defaults; existing subscriptions must keep their saved limit.
-            if value.id == nil && value.source.usesRE0DefaultPoints {
-                value.maxPoints = try await defaultUnlockPoints()
+            if value.id == nil {
+                value.maxPoints = try await defaultUnlockPoints(for: value.source)
             } else {
                 value.maxPoints = 0
             }
