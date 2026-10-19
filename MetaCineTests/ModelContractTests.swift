@@ -3,6 +3,14 @@ import XCTest
 
 @MainActor
 final class ModelContractTests: XCTestCase {
+    func testResourceTabTitlesKeepBackendSourceIdentifiers() async throws {
+        XCTAssertEqual(ResourceSource.allCases.map(\.tabTitle), ["全部", "RE0", "TG", "栖影", "聚影"])
+        XCTAssertEqual(ResourceSource.allCases.map(\.rawValue), ["all", "re0", "telegram", "hdhaven", "jying"])
+        XCTAssertEqual(ResourceSource.telegram.title, "Telegram")
+        XCTAssertEqual(ResourceSource.hdhaven.title, "HDHaven")
+        XCTAssertEqual(ResourceSource.jying.title, "jying")
+    }
+
     func testServerURLSupportsSubpathsAndOptionalAPISuffix() async throws {
         XCTAssertEqual(try ServerProfile.normalizedURL(" http://192.168.1.5:8080/cinema/api/ ").absoluteString, "http://192.168.1.5:8080/cinema")
         XCTAssertEqual(try ServerProfile.normalizedURL("https://example.com/api").absoluteString, "https://example.com")

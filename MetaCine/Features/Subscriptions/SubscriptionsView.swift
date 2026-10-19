@@ -79,7 +79,11 @@ struct SubscriptionsView: View {
                         .accessibilityLabel("新增订阅").disabled(!store.isConnected)
                 }
             }
-            .sheet(item: $draft) { value in SubscriptionEditor(draft: value) }
+            .navigationDestination(isPresented: Binding(
+                get: { draft != nil }, set: { if !$0 { draft = nil } }
+            )) {
+                if let draft { SubscriptionEditor(draft: draft) }
+            }
             .confirmationDialog("删除订阅？", isPresented: Binding(
                 get: { deleting != nil }, set: { if !$0 { deleting = nil } }
             ), titleVisibility: .visible, presenting: deleting) { sub in

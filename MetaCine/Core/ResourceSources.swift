@@ -13,6 +13,15 @@ enum ResourceSource: String, Codable, CaseIterable, Identifiable {
         }
     }
     var supportsUnlock: Bool { self == .re0 || self == .hdhaven || self == .jying }
+    var tabTitle: String {
+        switch self {
+        case .all: "全部"
+        case .re0: "RE0"
+        case .telegram: "TG"
+        case .hdhaven: "栖影"
+        case .jying: "聚影"
+        }
+    }
     var usesUnlockPoints: Bool { self == .all || self == .re0 || self == .hdhaven }
     var unlockSettingsSource: Self? {
         switch self {

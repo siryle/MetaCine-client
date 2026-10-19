@@ -2,7 +2,6 @@ import SwiftUI
 
 struct ResourceSearchView: View {
     @Environment(AppStore.self) private var store
-    @Environment(\.dismiss) private var dismiss
     let initialQuery: String
     let initialMedia: ResourceMediaHint?
     @FocusState private var searchFocused: Bool
@@ -40,24 +39,24 @@ struct ResourceSearchView: View {
     }
 
     var body: some View {
-        NavigationStack {
-            searchPage
-                .sheet(item: $draft) { value in SubscriptionEditor(draft: value) }
-                .sheet(item: $openedJob) { job in NavigationStack { JobDetailView(jobID: job.id) } }
-                .cineNotice($notice)
-        }
+        searchPage
+            .sheet(item: $draft) { value in
+                NavigationStack { SubscriptionEditor(draft: value, isPresentedModally: true) }
+            }
+            .sheet(item: $openedJob) { job in NavigationStack { JobDetailView(jobID: job.id) } }
+            .cineNotice($notice)
     }
 
     private var searchPage: some View {
         resourceDialogs
             .background(CineBackdrop())
             .navigationTitle("资源搜索")
+            .navigationBarTitleDisplayMode(.inline)
             .toolbar { searchToolbar }
     }
 
     @ToolbarContentBuilder
     private var searchToolbar: some ToolbarContent {
-        ToolbarItem(placement: .topBarLeading) { Button("完成") { dismiss() } }
         ToolbarItem(placement: .topBarTrailing) { ServerIndicator() }
         ToolbarItemGroup(placement: .keyboard) {
             Spacer()
@@ -154,13 +153,32 @@ struct ResourceSearchView: View {
     }
 
     private var sourcePicker: some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            Picker("资源来源", selection: $sourceFilter) {
-                ForEach(ResourceSource.allCases) { source in
-                    Text("\(source.title) \(resultCount(for: source))").tag(source)
+        HStack(spacing: 0) {
+            ForEach(ResourceSource.allCases) { source in
+                Button { sourceFilter = source } label: {
+                    VStack(spacing: 3) {
+                        Text(source.tabTitle).font(.subheadline.weight(.semibold))
+                        Text(resultCount(for: source), format: .number)
+                            .font(.caption2).monospacedDigit().foregroundStyle(.secondary)
+                    }
+                    .lineLimit(1).minimumScaleFactor(0.7)
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 48)
+                    .background {
+                        if sourceFilter == source {
+                            RoundedRectangle(cornerRadius: 8).fill(.background)
+                        }
+                    }
+                    .contentShape(Rectangle())
                 }
-            }.pickerStyle(.segmented).fixedSize(horizontal: true, vertical: false)
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(source.tabTitle)，\(resultCount(for: source)) 个资源")
+                .accessibilityAddTraits(sourceFilter == source ? .isSelected : [])
+            }
         }
+        .padding(3)
+        .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 11))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("资源来源")
     }
 
     private func resultCount(for source: ResourceSource) -> Int {

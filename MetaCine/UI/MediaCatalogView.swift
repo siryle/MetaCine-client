@@ -11,7 +11,6 @@ struct MediaCatalogView: View {
     @State private var checkedAvailability: Set<String> = []
     @State private var availabilityRevision: UUID?
     @State private var availabilityNote: String?
-    @State private var selection: MediaItem?
     @State private var subscriptions: [ResourceSubscription]?
     @State private var subscriptionsError: String?
     @State private var subscriptionsRequestID = UUID()
@@ -73,7 +72,6 @@ struct MediaCatalogView: View {
             guard store.selectedTab == tab, scenePhase == .active else { return }
             await loadSubscriptions()
         }
-        .sheet(item: $selection) { item in MediaDetailView(item: item) }
         .cineNotice($notice)
     }
 
@@ -84,7 +82,9 @@ struct MediaCatalogView: View {
 
     private func posterCard(_ item: MediaItem) -> some View {
         VStack(alignment: .leading, spacing: 9) {
-            Button { selection = item } label: {
+            NavigationLink {
+                MediaDetailView(item: item)
+            } label: {
                 PosterView(path: item.artwork, fallback: item).aspectRatio(2 / 3, contentMode: .fit)
             }
             .buttonStyle(.plain)
@@ -113,7 +113,9 @@ struct MediaCatalogView: View {
                 .padding(8)
             }
             .clipShape(RoundedRectangle(cornerRadius: 15))
-            Button { selection = item } label: {
+            NavigationLink {
+                MediaDetailView(item: item)
+            } label: {
                 VStack(alignment: .leading, spacing: 9) {
                     Text(item.title).font(.subheadline.weight(.semibold)).lineLimit(2)
                     Text(item.subtitle).font(.caption).foregroundStyle(.secondary)

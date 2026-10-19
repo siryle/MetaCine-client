@@ -7,6 +7,7 @@ struct MediaSearchView: View {
     @State private var query = ""
     @State private var submittedQuery = ""
     @State private var searchID = UUID()
+    @State private var completedSearchID: UUID?
     @State private var requestID = UUID()
     @State private var refreshID = UUID()
     @State private var items: [MediaItem] = []
@@ -74,7 +75,9 @@ struct MediaSearchView: View {
                 .refreshable {
                     if !submittedQuery.isEmpty { await load(reset: true, refresh: true) }
                 }
-                .task(id: searchID) { await load(reset: true) }
+                .task(id: searchID) {
+                    if completedSearchID != searchID { await load(reset: true) }
+                }
                 .onAppear { consumeQuery() }
                 .onChange(of: store.searchQuery) { _, _ in consumeQuery() }
                 .onChange(of: query) { _, value in
@@ -167,6 +170,7 @@ struct MediaSearchView: View {
             page = nextPage
             remainingKinds = result.remainingKinds
             stale = stale || result.stale
+            completedSearchID = searchID
         } catch {
             if !isCancellation(error), requestID == identity { self.error = error.localizedDescription }
         }
