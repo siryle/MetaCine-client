@@ -77,6 +77,11 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(parts.path, "/cinema/api/resources/rankings")
         XCTAssertEqual(parts.queryItems?.first?.value, "冷门佳片")
         XCTAssertEqual(parts.queryItems?.last?.value, "A&B + C")
+
+        let plusURL = try api.url(path: "api/tmdb/search", query: [URLQueryItem(name: "query", value: "C++")])
+        let plusParts = try XCTUnwrap(URLComponents(url: plusURL, resolvingAgainstBaseURL: false))
+        XCTAssertTrue(try XCTUnwrap(plusParts.percentEncodedQuery).contains("C%2B%2B"))
+        XCTAssertEqual(plusParts.queryItems?.first?.value, "C++")
     }
 
     func testUnauthorizedRequestAuthenticatesAndRetriesOnce() async throws {

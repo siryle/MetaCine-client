@@ -89,9 +89,16 @@ final class AppStore {
         connectionTask = Task { @MainActor in
             do {
                 let api = try APIClient(profile: profile, credential: CredentialStore.read(profile.id))
+                guard !Task.isCancelled, contextID == generation else {
+                    api.invalidate()
+                    return
+                }
                 client = api
                 let session = try await api.connect()
-                guard !Task.isCancelled, contextID == generation else { return }
+                guard !Task.isCancelled, contextID == generation else {
+                    api.invalidate()
+                    return
+                }
                 serverSession = session
                 connection = .connected
             } catch {

@@ -9,6 +9,7 @@ struct ResourceSearchView: View {
     @State private var query = ""
     @State private var submittedQuery = ""
     @State private var searchID = UUID()
+    @State private var completedSearchID: UUID?
     @State private var requestID = UUID()
     @State private var groups: [ResourceProviderState] = []
     @State private var sourceFilter: ResourceSource = .all
@@ -96,7 +97,10 @@ struct ResourceSearchView: View {
         searchScrollView
             .scrollDismissesKeyboard(.interactively)
             .refreshable { if searched { await search() } }
-            .task(id: searchID) { if !submittedQuery.isEmpty { await search() } }
+            .task(id: searchID) {
+                guard !submittedQuery.isEmpty, completedSearchID != searchID else { return }
+                await search()
+            }
             .onAppear(perform: initializeSearch)
             .onDisappear { searchFocused = false }
     }
@@ -399,23 +403,35 @@ struct ResourceSearchView: View {
             guard requestID == identity, !Task.isCancelled else { return }
             loading = false
             await enrichResults(using: api, identity: identity)
+            guard requestID == identity, !Task.isCancelled else { return }
+            completedSearchID = searchID
         } catch {
-            if !isCancellation(error), requestID == identity { self.error = error.localizedDescription }
+            if !isCancellation(error), requestID == identity {
+                self.error = error.localizedDescription
+                completedSearchID = searchID
+            }
         }
     }
 
     private func subscriptionDraft(_ result: ResourceResult) -> SubscriptionDraft {
         var value = media[ResourceMediaIdentity(result)]?.subscription() ?? result.subscription()
-        if let hint = currentMedia, hint.matches(result) {
+        let hint = currentMedia.flatMap { $0.matches(result) ? $0 : nil }
+        if let hint {
             value.title = hint.title
             value.originalTitle = hint.originalTitle
             if hint.tmdbID > 0 { value.tmdbID = hint.tmdbID }
             value.kind = MediaKind(rawValue: hint.kind) ?? value.kind
             if hint.year > 0 { value.year = hint.year }
         }
-        value.season = value.kind == .tv ? (result.season ?? currentMedia?.season ?? 0) : 0
+        value.season = value.kind == .tv ? (result.season ?? hint?.season ?? value.season) : 0
         value.resourceType = result.resourceKind
         return value
+    }
+
+    private func transferMediaHint(_ result: ResourceResult) -> ResourceMediaHint? {
+        let draft = subscriptionDraft(result)
+        guard draft.tmdbID > 0 || !draft.title.isEmpty else { return nil }
+        return ResourceMediaHint(draft)
     }
 
     @MainActor private func subscribe(_ result: ResourceResult) async {
@@ -486,7 +502,7 @@ struct ResourceSearchView: View {
         defer { transferring.remove(result.id) }
         do {
             guard !result.shareURL.isEmpty else { throw APIError.validation("请先获取 \(result.resourceSource.title) 资源链接。") }
-            let hint = currentMedia ?? media[ResourceMediaIdentity(result)].map { ResourceMediaHint($0.subscription()) }
+            let hint = transferMediaHint(result)
             let response: TransferResponse = try await store.requireClient().send(
                 "POST", "api/resources/transfer", body: TransferBody(text: result.shareURL, media: hint)
             )

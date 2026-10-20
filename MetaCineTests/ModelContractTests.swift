@@ -74,6 +74,20 @@ final class ModelContractTests: XCTestCase {
         XCTAssertFalse(ResourceMediaIdentity(try resourceResult(title: "Example Show (2026)", tmdbID: 100)).matches(media))
     }
 
+    func testResourceMediaHintPreservesResultIdentityAndSeason() async throws {
+        let data = try JSONSerialization.data(withJSONObject: [
+            "title": "Example Show", "channel": "channel", "post_url": "https://example.test/post",
+            "share_url": "https://115.com/s/example", "type": "share", "tmdb_id": 42,
+            "kind": "tv", "season": 3
+        ] as [String: Any])
+        let result = try APIClient.decoder.decode(ResourceResult.self, from: data)
+        let hint = ResourceMediaHint(result)
+
+        XCTAssertEqual(hint.tmdbID, 42)
+        XCTAssertEqual(hint.kind, "tv")
+        XCTAssertEqual(hint.season, 3)
+    }
+
     private func resourceResult(title: String, tmdbID: Int = 0) throws -> ResourceResult {
         let data = try JSONSerialization.data(withJSONObject: [
             "title": title, "channel": "channel", "post_url": "https://t.me/channel/1",

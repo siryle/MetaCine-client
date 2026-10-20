@@ -126,6 +126,9 @@ final class APIClient {
         var parts = URLComponents(url: baseURL, resolvingAgainstBaseURL: false)!
         parts.path = baseURL.path + "/" + path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         parts.queryItems = query.isEmpty ? nil : query
+        if let encodedQuery = parts.percentEncodedQuery {
+            parts.percentEncodedQuery = encodedQuery.replacingOccurrences(of: "+", with: "%2B")
+        }
         guard let url = parts.url else { throw APIError.validation("请求地址无效。") }
         return url
     }

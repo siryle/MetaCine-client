@@ -51,6 +51,10 @@ struct ResourceMediaHint: Encodable {
         season = draft.kind == .tv ? draft.season : 0
     }
 
+    init(_ result: ResourceResult) {
+        self.init(result.subscription())
+    }
+
     func matchesQuery(_ query: String) -> Bool {
         let name = Self.normalized(query)
         return !name.isEmpty && [title, originalTitle].contains { Self.normalized($0) == name }
