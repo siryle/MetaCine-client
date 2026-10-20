@@ -288,6 +288,136 @@ final class APIClientTests: XCTestCase {
         XCTAssertTrue(requests.all.isEmpty)
     }
 
+    func testLibraryStatusesUseUnifiedEndpointAndPreserveIdentityAndOrder() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                return (200, [:], Data(#"{"in_library":[true,false],"subscribed":[false,true]}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let native = try APIClient.decoder.decode(MediaItem.self, from: Data("""
+        {"id":123,"source":"maoyan","origin_id":"123","kind":"movie","title":"Native","year":2026}
+        """.utf8))
+        let tmdb = try APIClient.decoder.decode(MediaItem.self, from: Data("""
+        {"id":42,"source":"tmdb","kind":"tv","title":"Example Show","year":2025}
+        """.utf8))
+        let statuses = try await api.libraryStatuses(for: [native, tmdb].map { AvailabilityRequest.AvailabilityItem($0) })
+        XCTAssertEqual(statuses, [
+            MediaLibraryStatus(inLibrary: true, subscribed: false),
+            MediaLibraryStatus(inLibrary: false, subscribed: true)
+        ])
+        XCTAssertEqual(requests.all.count, 1)
+        let request = try XCTUnwrap(requests.all.first)
+        XCTAssertEqual(request.url?.path, "/cinema/api/resources/library-status")
+        XCTAssertEqual(request.httpMethod, "POST")
+        let items = try XCTUnwrap(try requestJSON(request)["items"] as? [[String: Any]])
+        XCTAssertEqual(items[0]["tmdb_id"] as? Int, 0)
+        XCTAssertEqual(items[1]["tmdb_id"] as? Int, 42)
+        XCTAssertEqual(items[1]["kind"] as? String, "tv")
+    }
+
+    func testLibraryStatusesRejectIncompleteResponses() async throws {
+        let api = try client()
+        defer { api.invalidate() }
+        let item = try APIClient.decoder.decode(MediaItem.self, from: Data("""
+        {"id":42,"kind":"movie","title":"Example"}
+        """.utf8))
+        for json in [
+            #"{"in_library":[],"subscribed":[false]}"#,
+            #"{"in_library":[false],"subscribed":[]}"#
+        ] {
+            StubURLProtocol.lock.withLock {
+                StubURLProtocol.handler = { _ in (200, [:], Data(json.utf8)) }
+            }
+            do {
+                _ = try await api.libraryStatuses(for: [AvailabilityRequest.AvailabilityItem(item)])
+                XCTFail("Incomplete statuses must not expose a subscription button.")
+            } catch {
+                guard case APIError.invalidResponse = error else { return XCTFail("Expected invalid response.") }
+            }
+        }
+    }
+
+    func testLibraryStatusesValidateBatchSizeBeforeSending() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                return (200, [:], Data("{}".utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let item = try APIClient.decoder.decode(MediaItem.self, from: Data("""
+        {"id":42,"kind":"movie","title":"Example"}
+        """.utf8))
+        for count in [0, 51] {
+            do {
+                _ = try await api.libraryStatuses(for: Array(repeating: AvailabilityRequest.AvailabilityItem(item), count: count))
+                XCTFail("Invalid batches must not issue requests.")
+            } catch {
+                guard case APIError.validation = error else { return XCTFail("Expected validation error.") }
+            }
+        }
+        XCTAssertTrue(requests.all.isEmpty)
+    }
+
+    func testDoubanLibraryIdentityUsesUniqueTMDBResolution() async throws {
+        let requests = RecordedRequests()
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                requests.append(request)
+                if request.url!.path.contains("/douban/") {
+                    return (200, [:], Data("""
+                    {"id":123,"kind":"movie","title":"Native","original_title":"Original","year":2026}
+                    """.utf8))
+                }
+                return (200, [:], Data("""
+                {"matched":true,"media":{"id":42,"source":"tmdb","kind":"movie","title":"Resolved","year":2026}}
+                """.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let item = try APIClient.decoder.decode(MediaItem.self, from: Data("""
+        {"id":123,"source":"douban","douban_id":"123","kind":"movie","title":"Native"}
+        """.utf8))
+        let identity = try await api.libraryIdentity(for: item)
+        XCTAssertEqual(identity.tmdbID, 42)
+        XCTAssertEqual(identity.title, "Resolved")
+        XCTAssertEqual(identity.year, 2026)
+        XCTAssertEqual(requests.all.map { $0.url!.lastPathComponent }, ["123", "resolve"])
+        let hint = try requestJSON(try XCTUnwrap(requests.all.last))
+        XCTAssertEqual(hint["original_title"] as? String, "Original")
+        XCTAssertEqual(hint["year"] as? Int, 2026)
+    }
+
+    func testDoubanLibraryIdentityKeepsDetailsWhenResolutionFails() async throws {
+        StubURLProtocol.lock.withLock {
+            StubURLProtocol.handler = { request in
+                if request.url!.path.contains("/douban/") {
+                    return (200, [:], Data("""
+                    {"id":123,"kind":"movie","title":"Native","original_title":"Original","year":2026}
+                    """.utf8))
+                }
+                return (503, [:], Data(#"{"error":"TMDB unavailable"}"#.utf8))
+            }
+        }
+        let api = try client()
+        defer { api.invalidate() }
+        let item = try APIClient.decoder.decode(MediaItem.self, from: Data("""
+        {"id":123,"source":"douban","douban_id":"123","kind":"movie","title":"Native"}
+        """.utf8))
+        let identity = try await api.libraryIdentity(for: item)
+        XCTAssertEqual(identity.tmdbID, 0)
+        XCTAssertEqual(identity.title, "Native")
+        XCTAssertEqual(identity.originalTitle, "Original")
+        XCTAssertEqual(identity.year, 2026)
+    }
+
     func testNativeCatalogResolutionUsesServerMatchingEndpoint() async throws {
         let requests = RecordedRequests()
         StubURLProtocol.lock.withLock {

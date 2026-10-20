@@ -37,7 +37,7 @@ struct RecommendationProvider: Identifiable {
         .init(id: "hulu", title: "Hulu", categories: streamingCategories),
         .init(id: "maoyan", title: "猫眼", categories: [
             .init("tv", "电视剧榜"), .init("web_tv", "网络剧榜"),
-            .init("variety", "综艺榜"), .init("movie", "网络电影榜")
+            .init("variety", "综艺榜"), .init("movie", "网络电影榜"), .init("movie_playing", "电影票房榜")
         ]),
         .init(id: "douban", title: "豆瓣", categories: [
             .init("movie_coming", "即将上映"), .init("movie_playing", "正在上映"),

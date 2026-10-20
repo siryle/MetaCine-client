@@ -58,6 +58,29 @@ final class CatalogContractTests: XCTestCase {
         XCTAssertTrue(filter.categories.contains { $0.id == "movie_top250" })
     }
 
+    func testMaoyanBoardsIncludeBoxOfficeWithoutStreamingParameters() async throws {
+        var filter = RecommendationFilter()
+        filter.selectProvider("maoyan")
+        XCTAssertEqual(filter.categories.map(\.id), ["tv", "web_tv", "variety", "movie", "movie_playing"])
+        XCTAssertFalse(filter.provider.streaming)
+        XCTAssertEqual(filter.endpoint, "api/resources/recommendations")
+        XCTAssertEqual(values(filter.query(category: "movie_playing", refresh: true)), [
+            "provider": "maoyan", "category": "movie_playing", "page": "1", "refresh": "1"
+        ])
+    }
+
+    func testLibraryStatusPrefersSubscriptionsAndOnlyOffersMissingWorks() async throws {
+        let subscribed = MediaLibraryStatus(inLibrary: true, subscribed: true)
+        XCTAssertEqual(subscribed.title, "已订阅")
+        XCTAssertFalse(subscribed.canSubscribe)
+        let inLibrary = MediaLibraryStatus(inLibrary: true, subscribed: false)
+        XCTAssertEqual(inLibrary.title, "已入库")
+        XCTAssertFalse(inLibrary.canSubscribe)
+        let missing = MediaLibraryStatus(inLibrary: false, subscribed: false)
+        XCTAssertEqual(missing.title, "订阅")
+        XCTAssertTrue(missing.canSubscribe)
+    }
+
     func testNativeCatalogIDsStayDistinctAndNeverBecomeTMDBIDs() async throws {
         for source in ["anilist", "bangumi", "imdb", "maoyan", "tencent", "douban"] {
             let item = try media(source: source, id: 42, originID: "native-42")

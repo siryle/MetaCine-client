@@ -7,13 +7,11 @@ struct MediaCatalogView: View {
     let tab: AppStore.Tab
     let refreshID: UUID
     var horizontal = false
-    @State private var availability: Set<String> = []
-    @State private var checkedAvailability: Set<String> = []
-    @State private var availabilityRevision: UUID?
-    @State private var availabilityNote: String?
-    @State private var subscriptions: [ResourceSubscription]?
-    @State private var subscriptionsError: String?
-    @State private var subscriptionsRequestID = UUID()
+    @State private var statuses: [String: MediaLibraryStatus] = [:]
+    @State private var statusIdentities: [String: AvailabilityRequest.AvailabilityItem] = [:]
+    @State private var statusRevision: UUID?
+    @State private var statusError: String?
+    @State private var statusRequestID = UUID()
     @State private var subscribing: Set<String> = []
     @State private var notice: InlineNotice?
 
@@ -24,11 +22,8 @@ struct MediaCatalogView: View {
 
     var body: some View {
         LazyVStack(alignment: .leading, spacing: 24) {
-            if let subscriptionsError {
-                ErrorBanner(message: subscriptionsError) { Task { await loadSubscriptions() } }
-            }
-            if let availabilityNote {
-                Text(availabilityNote).font(.caption).foregroundStyle(.secondary)
+            if let statusError {
+                ErrorBanner(message: statusError) { Task { await loadStatuses() } }
             }
             ForEach(sections) { section in
                 VStack(alignment: .leading, spacing: 14) {
@@ -65,19 +60,24 @@ struct MediaCatalogView: View {
                 }
             }
         }
-        .task(id: AvailabilityKey(revision: refreshID, items: items.map(\.stableID))) {
-            await loadAvailability()
-        }
-        .task(id: "\(refreshID):\(store.subscriptionsRevision):\(store.selectedTab == tab && scenePhase == .active)") {
+        .task(id: StatusKey(
+            revision: refreshID, subscriptions: store.subscriptionsRevision,
+            items: items.map(\.stableID), active: store.selectedTab == tab && scenePhase == .active
+        )) {
             guard store.selectedTab == tab, scenePhase == .active else { return }
-            await loadSubscriptions()
+            while !Task.isCancelled {
+                await loadStatuses()
+                do { try await Task.sleep(for: .seconds(10)) } catch { return }
+            }
         }
         .cineNotice($notice)
     }
 
-    private struct AvailabilityKey: Equatable {
+    private struct StatusKey: Equatable {
         let revision: UUID
+        let subscriptions: UUID
         let items: [String]
+        let active: Bool
     }
 
     private func posterCard(_ item: MediaItem) -> some View {
@@ -98,19 +98,8 @@ struct MediaCatalogView: View {
                         .allowsHitTesting(false)
                 }
             }
-            .overlay(alignment: .bottom) {
-                HStack(alignment: .bottom, spacing: 4) {
-                    if availability.contains(item.stableID) {
-                        Text("有资源").font(.caption2.bold()).foregroundStyle(.white)
-                            .padding(.horizontal, 7).padding(.vertical, 6)
-                            .background(CineTheme.accent, in: Capsule())
-                            .accessibilityLabel("缓存频道中有匹配资源")
-                            .allowsHitTesting(false)
-                    }
-                    Spacer(minLength: 0)
-                    subscriptionControl(item)
-                }
-                .padding(8)
+            .overlay(alignment: .topTrailing) {
+                subscriptionControl(item).padding(8)
             }
             .clipShape(RoundedRectangle(cornerRadius: 15))
             NavigationLink {
@@ -129,24 +118,21 @@ struct MediaCatalogView: View {
         .accessibilityElement(children: .contain)
     }
 
-    private func isSubscribed(_ item: MediaItem) -> Bool {
-        subscriptions?.contains(where: { $0.matches(item) }) == true
-    }
-
     @ViewBuilder
     private func subscriptionControl(_ item: MediaItem) -> some View {
-        if isSubscribed(item) {
-            subscriptionBadge("已订阅")
-                .allowsHitTesting(false)
-        } else {
+        if let status = statuses[item.stableID] {
             let busy = subscribing.contains(item.stableID)
-            Button { Task { await subscribe(item) } } label: {
-                subscriptionBadge(busy ? "订阅中" : "订阅", loading: busy)
+            if status.canSubscribe {
+                Button { Task { await subscribe(item) } } label: {
+                    subscriptionBadge(busy ? "订阅中" : status.title, loading: busy)
+                }
+                .buttonStyle(.plain)
+                .disabled(busy)
+                .accessibilityLabel("订阅\(item.title)")
+                .accessibilityHint("使用默认偏好一键订阅")
+            } else {
+                subscriptionBadge(status.title).allowsHitTesting(false)
             }
-            .buttonStyle(.plain)
-            .disabled(subscriptions == nil || busy)
-            .accessibilityLabel("订阅\(item.title)")
-            .accessibilityHint(subscriptions == nil ? "等待订阅状态加载完成" : "使用默认偏好一键订阅")
         }
     }
 
@@ -161,83 +147,109 @@ struct MediaCatalogView: View {
     }
 
     @MainActor
-    private func loadSubscriptions() async {
-        let identity = UUID()
-        subscriptionsRequestID = identity
-        do {
-            let values: [ResourceSubscription]? = try await store.requireClient().get("api/resources/subscriptions")
-            try Task.checkCancellation()
-            guard subscriptionsRequestID == identity else { return }
-            subscriptions = values ?? []
-            subscriptionsError = nil
-        } catch {
-            if !isCancellation(error), subscriptionsRequestID == identity {
-                subscriptionsError = "订阅状态加载失败：\(error.localizedDescription)"
-            }
-        }
-    }
-
-    @MainActor
     private func subscribe(_ item: MediaItem) async {
-        guard subscriptions != nil, !isSubscribed(item), subscribing.insert(item.stableID).inserted else { return }
+        guard statuses[item.stableID]?.canSubscribe == true, subscribing.insert(item.stableID).inserted else { return }
         let context = store.contextID
         defer { subscribing.remove(item.stableID) }
         do {
             let api = try store.requireClient()
             var draft = item.subscription()
-            // Douban tag rankings can omit the year; resolve it before saving, as the server UI does.
-            if item.source?.hasPrefix("douban") == true, draft.year == 0 {
-                guard let id = item.doubanID, !id.isEmpty, id.allSatisfy(\.isNumber) else {
-                    throw APIError.validation("豆瓣条目缺少有效 ID。")
-                }
-                let detail: MediaDetail = try await api.get(
-                    "api/resources/rankings/douban/\(id)",
-                    query: [URLQueryItem(name: "kind", value: item.kind)]
-                )
-                draft.year = detail.year ?? draft.year
-                draft.originalTitle = detail.originalTitle ?? draft.originalTitle
-                draft.poster = detail.poster ?? draft.poster
+            if let identity = statusIdentities[item.stableID] {
+                draft.title = identity.title
+                draft.originalTitle = identity.originalTitle
+                draft.tmdbID = identity.tmdbID
+                draft.year = identity.year
             }
-            let saved = try await api.saveSubscription(draft)
+            _ = try await api.saveSubscription(draft)
             guard store.contextID == context else { return }
-            // Discard any older list response so it cannot erase the subscription just saved.
-            subscriptionsRequestID = UUID()
-            subscriptions?.append(saved)
+            statusRequestID = UUID()
+            statuses[item.stableID] = MediaLibraryStatus(inLibrary: false, subscribed: true)
             store.subscriptionsDidChange()
         } catch {
             if !isCancellation(error), store.contextID == context {
                 notice = InlineNotice(title: "订阅失败", message: error.localizedDescription)
-                await loadSubscriptions()
+                await loadStatuses()
             }
         }
     }
 
     @MainActor
-    private func loadAvailability() async {
-        if availabilityRevision != refreshID {
-            availabilityRevision = refreshID
-            availability = []
-            checkedAvailability = []
-            availabilityNote = nil
+    private func loadStatuses() async {
+        let identity = UUID()
+        statusRequestID = identity
+        if statusRevision != refreshID {
+            statusRevision = refreshID
+            statuses = [:]
+            statusIdentities = [:]
         }
-        let pending = items.filter { !checkedAvailability.contains($0.stableID) }
+        let currentItems = items
+        guard !currentItems.isEmpty else { return }
+        statusError = nil
         do {
             let api = try store.requireClient()
-            // The backend accepts at most 50 entries per availability request.
-            for start in stride(from: 0, to: pending.count, by: 50) {
-                let chunk = Array(pending[start..<min(start + 50, pending.count)])
-                let response: AvailabilityResponse = try await api.send(
-                    "POST", "api/resources/availability",
-                    body: AvailabilityRequest(items: chunk.map(AvailabilityRequest.AvailabilityItem.init))
-                )
-                try Task.checkCancellation()
-                for (item, available) in zip(chunk, response.available) {
-                    checkedAvailability.insert(item.stableID)
-                    if available { availability.insert(item.stableID) }
+            let ready = currentItems.filter {
+                statusIdentities[$0.stableID] != nil || $0.source?.hasPrefix("douban") != true
+            }
+            for start in stride(from: 0, to: ready.count, by: 50) {
+                let chunk = Array(ready[start..<min(start + 50, ready.count)])
+                let hints = chunk.map { statusIdentities[$0.stableID] ?? AvailabilityRequest.AvailabilityItem($0) }
+                do {
+                    let values = try await api.libraryStatuses(for: hints)
+                    try Task.checkCancellation()
+                    guard statusRequestID == identity else { return }
+                    for (item, value) in zip(chunk, values) { statuses[item.stableID] = value }
+                } catch {
+                    if isCancellation(error) { return }
+                    guard statusRequestID == identity else { return }
+                    for item in chunk { statuses[item.stableID] = nil }
+                    statusError = "库存与订阅状态暂不可用，可重试或稍后自动更新。"
+                }
+            }
+            let pending = currentItems.filter {
+                $0.source?.hasPrefix("douban") == true && statusIdentities[$0.stableID] == nil
+            }
+            await withTaskGroup(of: (String, Result<(AvailabilityRequest.AvailabilityItem, MediaLibraryStatus), Error>).self) { group in
+                var next = 0
+                func enqueue(_ item: MediaItem) {
+                    group.addTask {
+                        do {
+                            let hint = try await api.libraryIdentity(for: item)
+                            let values = try await api.libraryStatuses(for: [hint])
+                            return (item.stableID, .success((hint, values[0])))
+                        } catch { return (item.stableID, .failure(error)) }
+                    }
+                }
+                // Resolve and update Douban entries individually, with at most three in flight.
+                for item in pending.prefix(3) {
+                    enqueue(item)
+                    next += 1
+                }
+                for await (key, result) in group {
+                    guard !Task.isCancelled, statusRequestID == identity else {
+                        group.cancelAll()
+                        return
+                    }
+                    switch result {
+                    case .success(let (hint, value)):
+                        statusIdentities[key] = hint
+                        statuses[key] = value
+                    case .failure(let error):
+                        if !isCancellation(error) {
+                            statuses[key] = nil
+                            statusError = "库存与订阅状态暂不可用，可重试或稍后自动更新。"
+                        }
+                    }
+                    if next < pending.count {
+                        enqueue(pending[next])
+                        next += 1
+                    }
                 }
             }
         } catch {
-            if !isCancellation(error) { availabilityNote = "资源标记暂不可用，仍可正常浏览作品。" }
+            if !isCancellation(error), statusRequestID == identity {
+                statuses = [:]
+                statusError = "库存与订阅状态暂不可用：\(error.localizedDescription)"
+            }
         }
     }
 }

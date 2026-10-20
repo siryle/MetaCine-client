@@ -174,17 +174,15 @@ struct AvailabilityRequest: Encodable {
         let tmdbID: Int
         let kind: String
         let year: Int
-        init(_ media: MediaItem) {
-            title = media.title
-            originalTitle = media.originalTitle ?? ""
+        init(_ media: MediaItem, detail: MediaDetail? = nil) {
+            title = detail?.title ?? media.title
+            originalTitle = detail?.originalTitle ?? media.originalTitle ?? ""
             tmdbID = media.tmdbID
             kind = media.kind
-            year = media.year ?? 0
+            year = detail?.year ?? media.year ?? 0
         }
     }
 }
-
-struct AvailabilityResponse: Decodable { let available: [Bool] }
 
 struct SearchResponse: Decodable {
     let results: [ResourceResult]?
