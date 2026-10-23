@@ -118,6 +118,21 @@ final class CatalogContractTests: XCTestCase {
         XCTAssertEqual(item.stableID, "imdb:movie:tt123")
     }
 
+    func testSubscriptionsPreservePreferredCatalogArtwork() async throws {
+        for (image, poster, expected) in [
+            ("https://example.test/poster.jpg", "", "https://example.test/poster.jpg"),
+            ("https://example.test/poster.jpg", "/fallback.jpg", "https://example.test/poster.jpg"),
+            ("", "/fallback.jpg", "/fallback.jpg"),
+            ("", "", "")
+        ] {
+            let item = try APIClient.decoder.decode(MediaItem.self, from: Data("""
+            {"id":0,"source":"imdb","origin_id":"tt123","kind":"movie","title":"Example",
+             "image_url":"\(image)","poster":"\(poster)"}
+            """.utf8))
+            XCTAssertEqual(item.subscription().poster, expected)
+        }
+    }
+
     func testNativeRankingBadgeMatchesResolvedSubscriptionsByOriginalTitle() async throws {
         let item = try media(source: "imdb", originID: "tt123", title: "Example")
         let subscription = try APIClient.decoder.decode(ResourceSubscription.self, from: Data("""

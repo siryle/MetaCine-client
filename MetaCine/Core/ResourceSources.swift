@@ -60,12 +60,21 @@ struct ResourceMediaHint: Encodable {
         return !name.isEmpty && [title, originalTitle].contains { Self.normalized($0) == name }
     }
 
-    func matches(_ result: ResourceResult) -> Bool {
+    func matches(_ result: ResourceResult, resolved: MediaItem? = nil) -> Bool {
         if let kind = result.kind, !kind.isEmpty, kind != self.kind { return false }
         if tmdbID > 0, let id = result.tmdbID, id > 0, id != tmdbID { return false }
         let identity = ResourceMediaIdentity(result)
         if kind == "movie", year > 0, identity.year > 0, year != identity.year { return false }
-        return season == 0 || (result.season ?? 0) == 0 || season == result.season
+        guard season == 0 || (result.season ?? 0) == 0 || season == result.season else { return false }
+        if let resolved {
+            guard resolved.kind == kind else { return false }
+            if kind == "movie", year > 0, let resolvedYear = resolved.year, resolvedYear > 0,
+               year != resolvedYear { return false }
+            if tmdbID > 0, resolved.tmdbID > 0 { return tmdbID == resolved.tmdbID }
+            return matchesQuery(resolved.title) || matchesQuery(resolved.originalTitle ?? "")
+        }
+        if tmdbID > 0, result.tmdbID == tmdbID, result.kind == kind { return true }
+        return matchesQuery(identity.title)
     }
 
     private static func normalized(_ value: String) -> String {

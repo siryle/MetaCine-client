@@ -43,10 +43,7 @@ struct JobCorrectionView: View {
                 Picker("作品类型", selection: $kind) {
                     ForEach(MediaKind.allCases) { Text($0.title).tag($0) }
                 }
-                .onChange(of: kind) { _, _ in
-                    tmdbID = 0
-                    resetSearch()
-                }
+                .onChange(of: kind) { _, _ in resetSearch() }
                 TextField("作品名称", text: $query).autocorrectionDisabled()
                     .onSubmit { Task { await search() } }
                     .onChange(of: query) { _, _ in resetSearch() }
@@ -111,6 +108,7 @@ struct JobCorrectionView: View {
     }
 
     private func resetSearch() {
+        tmdbID = 0
         searchID = UUID()
         searching = false
         searched = false

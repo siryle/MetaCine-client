@@ -88,6 +88,53 @@ final class ModelContractTests: XCTestCase {
         XCTAssertEqual(hint.season, 3)
     }
 
+    func testResourceSubscriptionsDoNotInheritUnrelatedOrConflictingMediaHints() async throws {
+        let hint = ResourceMediaHint(SubscriptionDraft(title: "Example", tmdbID: 42, year: 2026))
+        let other = try resourceResult(title: "Other (2026)")
+        XCTAssertFalse(hint.matches(other))
+        XCTAssertEqual(other.subscription(hint: hint).title, "Other")
+        XCTAssertEqual(other.subscription(hint: hint).tmdbID, 0)
+
+        for (id, title, kind, year) in [
+            (99, "Other", "movie", 2026),
+            (99, "Example", "movie", 2026),
+            (42, "Example", "tv", 2026),
+            (42, "Example", "movie", 2025)
+        ] {
+            let result = try resourceResult(title: "\(title) (2026)")
+            let media = try APIClient.decoder.decode(MediaItem.self, from: Data("""
+            {"id":\(id),"title":"\(title)","kind":"\(kind)","year":\(year),"poster":"/verified.jpg"}
+            """.utf8))
+            XCTAssertFalse(hint.matches(result, resolved: media))
+            let draft = result.subscription(resolved: media, hint: hint)
+            XCTAssertEqual(draft.tmdbID, id)
+            XCTAssertEqual(draft.title, title)
+            XCTAssertEqual(draft.kind.rawValue, kind)
+            XCTAssertEqual(draft.year, year)
+            XCTAssertEqual(draft.poster, "/verified.jpg")
+            XCTAssertEqual(ResourceMediaHint(draft).tmdbID, id)
+        }
+    }
+
+    func testResourceHintsAcceptTitleEvidenceAndCompleteTMDBIdentities() async throws {
+        let hint = ResourceMediaHint(SubscriptionDraft(
+            title: "Example", originalTitle: "Original", tmdbID: 42, kind: .tv, year: 2026, season: 2
+        ))
+        let result = try resourceResult(title: "剧集：ORIGINAL! (2026) S02E03 2160p")
+        XCTAssertTrue(hint.matches(result))
+        let draft = result.subscription(hint: hint)
+        XCTAssertEqual(draft.title, "Example")
+        XCTAssertEqual(draft.tmdbID, 42)
+        XCTAssertEqual(draft.kind, .tv)
+        XCTAssertEqual(draft.season, 2)
+
+        let translated = try APIClient.decoder.decode(ResourceResult.self, from: Data("""
+        {"title":"Translated","channel":"test","post_url":"","share_url":"","type":"share","tmdb_id":42,"kind":"tv"}
+        """.utf8))
+        XCTAssertTrue(hint.matches(translated))
+        XCTAssertFalse(hint.matches(try resourceResult(title: "Other", tmdbID: 42)))
+    }
+
     private func resourceResult(title: String, tmdbID: Int = 0) throws -> ResourceResult {
         let data = try JSONSerialization.data(withJSONObject: [
             "title": title, "channel": "channel", "post_url": "https://t.me/channel/1",
@@ -361,6 +408,22 @@ final class ModelContractTests: XCTestCase {
         XCTAssertNil(job.entries)
         XCTAssertEqual(job.progress, 0.3, accuracy: 0.001)
         XCTAssertEqual(JobStatus.title(job.status), "执行中")
+    }
+
+    func testServerDateSortsParsedDatesNewestFirstAndKeepsUndatedRecordsLast() async throws {
+        struct Record {
+            let id: Int
+            let createdAt: String
+        }
+        let records = [
+            Record(id: 0, createdAt: "invalid"),
+            Record(id: 1, createdAt: "2026-10-23T00:00:00Z"),
+            Record(id: 2, createdAt: "2026-10-23T09:00:00+08:00"),
+            Record(id: 3, createdAt: "2026-10-23T00:00:00.000000000Z"),
+            Record(id: 4, createdAt: "0001-01-01T00:00:00Z")
+        ]
+        XCTAssertEqual(ServerDate.newestFirst(records, by: \.createdAt).map(\.id), [2, 1, 3, 0, 4])
+        XCTAssertTrue(ServerDate.newestFirst([Record](), by: \.createdAt).isEmpty)
     }
 
     func testRemoteSettingsRedactedProxyAndConfiguredFlagsDecode() async throws {

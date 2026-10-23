@@ -173,9 +173,7 @@ struct SubscriptionsView: View {
             let values: [ResourceSubscription]? = try await store.requireClient().get("api/resources/subscriptions")
             try Task.checkCancellation()
             guard requestID == identity else { return }
-            subscriptions = (values ?? []).sorted {
-                (ServerDate.parse($0.createdAt) ?? .distantPast) > (ServerDate.parse($1.createdAt) ?? .distantPast)
-            }
+            subscriptions = ServerDate.newestFirst(values ?? [], by: \.createdAt)
             error = nil
         } catch {
             if !silent, !isCancellation(error), requestID == identity { self.error = error.localizedDescription }

@@ -122,9 +122,7 @@ struct HistoryView: View {
         do {
             let response: [Job]? = try await store.requireClient().get("api/jobs")
             try Task.checkCancellation()
-            jobs = (response ?? []).sorted {
-                (ServerDate.parse($0.createdAt) ?? .distantPast) > (ServerDate.parse($1.createdAt) ?? .distantPast)
-            }
+            jobs = ServerDate.newestFirst(response ?? [], by: \.createdAt)
             error = nil
         } catch {
             if !silent, !isCancellation(error) { self.error = error.localizedDescription }

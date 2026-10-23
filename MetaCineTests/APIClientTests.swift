@@ -208,6 +208,27 @@ final class APIClientTests: XCTestCase {
         XCTAssertNil(media)
     }
 
+    func testResourceMediaRequiresSuccessfulSearchesBeforeAcceptingUniqueCandidates() async throws {
+        for failedKind in MediaKind.allCases {
+            StubURLProtocol.lock.withLock {
+                StubURLProtocol.handler = { request in
+                    let kind = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
+                        .queryItems?.first(where: { $0.name == "kind" })?.value ?? ""
+                    if kind == failedKind.rawValue {
+                        return (503, [:], Data(#"{"error":"TMDB unavailable"}"#.utf8))
+                    }
+                    return (200, [:], Data("""
+                    [{"id":42,"kind":"\(kind)","title":"Example Show","year":2026,"poster":"/poster.jpg"}]
+                    """.utf8))
+                }
+            }
+            let api = try client()
+            defer { api.invalidate() }
+            let media = try await api.resourceMedia(for: resourceIdentity())
+            XCTAssertNil(media, "A failed query must not make another type's candidate look unique.")
+        }
+    }
+
     func testResourceMediaFailuresAreOptionalButCancellationPropagates() async throws {
         let requests = RecordedRequests()
         StubURLProtocol.lock.withLock {
@@ -221,13 +242,13 @@ final class APIClientTests: XCTestCase {
         let identity = try resourceIdentity()
         let media = try await api.resourceMedia(for: identity)
         XCTAssertNil(media)
-        XCTAssertEqual(requests.all.count, 2)
+        XCTAssertEqual(requests.all.count, 1)
         api.invalidate()
         do {
             _ = try await api.resourceMedia(for: identity)
             XCTFail("Cancelled poster lookups must stop instead of trying more candidates.")
         } catch { XCTAssertTrue(error is CancellationError) }
-        XCTAssertEqual(requests.all.count, 2)
+        XCTAssertEqual(requests.all.count, 1)
     }
 
     func testTitleSearchCombinesMovieAndTVResultsAndTracksPagination() async throws {
@@ -395,7 +416,7 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(hint["year"] as? Int, 2026)
     }
 
-    func testDoubanLibraryIdentityKeepsDetailsWhenResolutionFails() async throws {
+    func testDoubanLibraryIdentityKeepsDetailsWhenNormallyUnmatched() async throws {
         StubURLProtocol.lock.withLock {
             StubURLProtocol.handler = { request in
                 if request.url!.path.contains("/douban/") {
@@ -403,7 +424,7 @@ final class APIClientTests: XCTestCase {
                     {"id":123,"kind":"movie","title":"Native","original_title":"Original","year":2026}
                     """.utf8))
                 }
-                return (503, [:], Data(#"{"error":"TMDB unavailable"}"#.utf8))
+                return (200, [:], Data(#"{"matched":false}"#.utf8))
             }
         }
         let api = try client()
@@ -416,6 +437,45 @@ final class APIClientTests: XCTestCase {
         XCTAssertEqual(identity.title, "Native")
         XCTAssertEqual(identity.originalTitle, "Original")
         XCTAssertEqual(identity.year, 2026)
+    }
+
+    func testDoubanLibraryIdentityPropagatesTransientFailuresAndCanRetry() async throws {
+        for failedEndpoint in ["123", "resolve"] {
+            let requests = RecordedRequests()
+            StubURLProtocol.lock.withLock {
+                StubURLProtocol.handler = { request in
+                    requests.append(request)
+                    let endpoint = request.url!.lastPathComponent
+                    if endpoint == failedEndpoint,
+                       requests.all.filter({ $0.url!.lastPathComponent == endpoint }).count == 1 {
+                        return (503, [:], Data(#"{"error":"Temporarily unavailable"}"#.utf8))
+                    }
+                    if endpoint == "123" {
+                        return (200, [:], Data("""
+                        {"title":"Native","original_title":"Original","year":2026}
+                        """.utf8))
+                    }
+                    return (200, [:], Data("""
+                    {"matched":true,"media":{"id":42,"source":"tmdb","kind":"movie","title":"Resolved","year":2026}}
+                    """.utf8))
+                }
+            }
+            let api = try client()
+            defer { api.invalidate() }
+            let item = try APIClient.decoder.decode(MediaItem.self, from: Data("""
+            {"id":123,"source":"douban","douban_id":"123","kind":"movie","title":"Native"}
+            """.utf8))
+            do {
+                _ = try await api.libraryIdentity(for: item)
+                XCTFail("Temporary failures must not be cached as completed identities.")
+            } catch {
+                guard case APIError.http(503, _) = error else { return XCTFail("Expected the upstream failure.") }
+            }
+            let identity = try await api.libraryIdentity(for: item)
+            XCTAssertEqual(identity.tmdbID, 42)
+            XCTAssertEqual(identity.title, "Resolved")
+            XCTAssertEqual(identity.year, 2026)
+        }
     }
 
     func testNativeCatalogResolutionUsesServerMatchingEndpoint() async throws {

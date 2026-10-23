@@ -414,18 +414,7 @@ struct ResourceSearchView: View {
     }
 
     private func subscriptionDraft(_ result: ResourceResult) -> SubscriptionDraft {
-        var value = media[ResourceMediaIdentity(result)]?.subscription() ?? result.subscription()
-        let hint = currentMedia.flatMap { $0.matches(result) ? $0 : nil }
-        if let hint {
-            value.title = hint.title
-            value.originalTitle = hint.originalTitle
-            if hint.tmdbID > 0 { value.tmdbID = hint.tmdbID }
-            value.kind = MediaKind(rawValue: hint.kind) ?? value.kind
-            if hint.year > 0 { value.year = hint.year }
-        }
-        value.season = value.kind == .tv ? (result.season ?? hint?.season ?? value.season) : 0
-        value.resourceType = result.resourceKind
-        return value
+        result.subscription(resolved: media[ResourceMediaIdentity(result)], hint: currentMedia)
     }
 
     private func transferMediaHint(_ result: ResourceResult) -> ResourceMediaHint? {

@@ -57,13 +57,17 @@ extension APIClient {
             }
         }
         guard !identity.title.isEmpty else { return nil }
-        let kinds = identity.kind.map { [$0] } ?? MediaKind.allCases
-        let matches = try await resourceMediaCandidates(for: identity, kinds: kinds)
-        if !matches.isEmpty { return matches.count == 1 ? matches.first : nil }
-        // Channel headings occasionally label a series as a movie, or vice versa.
-        if let kind = identity.kind {
-            let alternatives = try await resourceMediaCandidates(for: identity, kinds: [kind == .movie ? .tv : .movie])
-            return alternatives.count == 1 ? alternatives.first : nil
+        do {
+            let kinds = identity.kind.map { [$0] } ?? MediaKind.allCases
+            let matches = try await resourceMediaCandidates(for: identity, kinds: kinds)
+            if !matches.isEmpty { return matches.count == 1 ? matches.first : nil }
+            // Channel headings occasionally label a series as a movie, or vice versa.
+            if let kind = identity.kind {
+                let alternatives = try await resourceMediaCandidates(for: identity, kinds: [kind == .movie ? .tv : .movie])
+                return alternatives.count == 1 ? alternatives.first : nil
+            }
+        } catch {
+            if isCancellation(error) { throw error }
         }
         return nil
     }
@@ -71,16 +75,12 @@ extension APIClient {
     private func resourceMediaCandidates(for identity: ResourceMediaIdentity, kinds: [MediaKind]) async throws -> [MediaItem] {
         var matches: [MediaItem] = []
         for kind in kinds {
-            do {
-                let values: [MediaItem]? = try await get("api/tmdb/search", query: [
-                    URLQueryItem(name: "query", value: identity.title),
-                    URLQueryItem(name: "kind", value: kind.rawValue),
-                    URLQueryItem(name: "year", value: identity.year > 0 ? String(identity.year) : "")
-                ])
-                matches += (values ?? []).filter { $0.kind == kind.rawValue && identity.matches($0) }
-            } catch {
-                if isCancellation(error) { throw error }
-            }
+            let values: [MediaItem]? = try await get("api/tmdb/search", query: [
+                URLQueryItem(name: "query", value: identity.title),
+                URLQueryItem(name: "kind", value: kind.rawValue),
+                URLQueryItem(name: "year", value: identity.year > 0 ? String(identity.year) : "")
+            ])
+            matches += (values ?? []).filter { $0.kind == kind.rawValue && identity.matches($0) }
         }
         return matches
     }

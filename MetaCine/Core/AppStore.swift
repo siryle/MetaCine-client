@@ -17,7 +17,6 @@ final class AppStore {
     private(set) var contextID = UUID()
     private(set) var subscriptionsRevision = UUID()
     var selectedTab: Tab = .discover
-    var searchQuery = ""
 
     private let defaults: UserDefaults
     private var connectionTask: Task<Void, Never>?
@@ -118,7 +117,6 @@ final class AppStore {
         client?.invalidate()
         client = nil
         serverSession = nil
-        searchQuery = ""
         connection = .idle
         contextID = UUID()
     }
@@ -130,10 +128,5 @@ final class AppStore {
 
     func subscriptionsDidChange() {
         subscriptionsRevision = UUID()
-    }
-
-    func search(for title: String) {
-        searchQuery = title
-        selectedTab = .search
     }
 }

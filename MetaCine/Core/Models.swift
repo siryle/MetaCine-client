@@ -138,7 +138,7 @@ struct MediaItem: Decodable, Identifiable {
         draft.tmdbID = tmdbID
         draft.kind = mediaKind
         draft.year = year ?? 0
-        draft.poster = poster ?? ""
+        draft.poster = artwork ?? ""
         return draft
     }
 
@@ -234,14 +234,24 @@ struct ResourceResult: Decodable, Identifiable {
         ["resolution", "size", "source", "created"]
             .compactMap { details?[$0] }.filter { !$0.isEmpty }.joined(separator: " · ")
     }
-    func subscription() -> SubscriptionDraft {
-        var draft = SubscriptionDraft()
+    func subscription(resolved media: MediaItem? = nil, hint: ResourceMediaHint? = nil) -> SubscriptionDraft {
         let identity = ResourceMediaIdentity(self)
-        draft.title = identity.title
-        draft.year = identity.year
-        draft.kind = MediaKind(rawValue: kind ?? "") ?? .movie
-        draft.tmdbID = tmdbID ?? 0
-        draft.season = draft.kind == .tv ? (season ?? 0) : 0
+        var draft = media?.subscription() ?? SubscriptionDraft()
+        if media == nil {
+            draft.title = identity.title
+            draft.year = identity.year
+            draft.kind = MediaKind(rawValue: kind ?? "") ?? .movie
+            draft.tmdbID = tmdbID ?? 0
+        }
+        let hint = hint.flatMap { $0.matches(self, resolved: media) ? $0 : nil }
+        if let hint {
+            draft.title = hint.title
+            draft.originalTitle = hint.originalTitle
+            if hint.tmdbID > 0 { draft.tmdbID = hint.tmdbID }
+            draft.kind = MediaKind(rawValue: hint.kind) ?? draft.kind
+            if hint.year > 0 { draft.year = hint.year }
+        }
+        draft.season = draft.kind == .tv ? (season ?? hint?.season ?? 0) : 0
         draft.resourceType = resourceKind
         return draft
     }
@@ -422,6 +432,12 @@ enum JobStatus {
 }
 
 enum ServerDate {
+    static func newestFirst<T>(_ values: [T], by date: KeyPath<T, String>) -> [T] {
+        values.map { (value: $0, date: parse($0[keyPath: date]) ?? .distantPast) }
+            .sorted { $0.date > $1.date }
+            .map(\.value)
+    }
+
     static func parse(_ value: String?) -> Date? {
         guard let value, !value.hasPrefix("0001-") else { return nil }
         let fractional = ISO8601DateFormatter()

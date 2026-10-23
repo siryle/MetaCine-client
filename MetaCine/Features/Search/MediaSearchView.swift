@@ -78,8 +78,6 @@ struct MediaSearchView: View {
                 .task(id: searchID) {
                     if completedSearchID != searchID { await load(reset: true) }
                 }
-                .onAppear { consumeQuery() }
-                .onChange(of: store.searchQuery) { _, _ in consumeQuery() }
                 .onChange(of: query) { _, value in
                     if !submittedQuery.isEmpty, value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                         submit()
@@ -125,13 +123,6 @@ struct MediaSearchView: View {
                 .disabled(query.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
         }
         .padding(14).background(.background, in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func consumeQuery() {
-        guard !store.searchQuery.isEmpty else { return }
-        query = store.searchQuery
-        store.searchQuery = ""
-        submit()
     }
 
     private func submit() {

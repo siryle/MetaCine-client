@@ -35,21 +35,13 @@ extension APIClient {
         }
         var detail: MediaDetail?
         if let id = item.doubanID, !id.isEmpty, id.allSatisfy(\.isNumber) {
-            do {
-                detail = try await get(
-                    "api/resources/rankings/douban/\(id)", query: [URLQueryItem(name: "kind", value: item.kind)]
-                )
-            } catch {
-                if isCancellation(error) { throw error }
-            }
+            detail = try await get(
+                "api/resources/rankings/douban/\(id)", query: [URLQueryItem(name: "kind", value: item.kind)]
+            )
         }
-        do {
-            let resolution = try await resolveCatalog(item, detail: detail)
-            if resolution.matched, let media = resolution.media, media.tmdbID > 0, media.kind == item.kind {
-                return AvailabilityRequest.AvailabilityItem(media)
-            }
-        } catch {
-            if isCancellation(error) { throw error }
+        let resolution = try await resolveCatalog(item, detail: detail)
+        if resolution.matched, let media = resolution.media, media.tmdbID > 0, media.kind == item.kind {
+            return AvailabilityRequest.AvailabilityItem(media)
         }
         return AvailabilityRequest.AvailabilityItem(item, detail: detail)
     }
